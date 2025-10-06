@@ -1,0 +1,18 @@
+// This is the Prisma schema file for todo0
+// Using SQLite for local development
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Todo {
+  id        Int      @id @default(autoincrement())
+  title     String
+  completed Boolean @default(false)
+  createdAt DateTime @default(now())
+}

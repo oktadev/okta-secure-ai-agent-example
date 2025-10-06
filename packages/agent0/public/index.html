@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agent0 Chat Interface</title>
+    <link rel="stylesheet" href="styles.css">
+    <!-- Import marked.js from CDN for markdown rendering -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🤖 Agent 0</h1>
+            <div id="authSection" class="auth-section">
+                <span id="userInfo" class="user-info"></span>
+                <button id="tokenPanelToggle" class="auth-button" style="display: none;" title="View ID Token">🔑</button>
+                <button id="crossAppAccessButton" class="auth-button" style="display: none;" title="Get ID-JAG Token"> 🔄 XAA </button>
+                <button id="loginButton" class="auth-button" style="display: none;">Login with Okta</button>
+                <button id="logoutButton" class="auth-button" style="display: none;">Logout</button>
+            </div>
+        </div>
+        
+        <div class="status" id="status">
+            <span id="statusText">Connecting to server...</span>
+            <div class="status-actions">
+                <button id="clearChatButton" class="status-action-button" title="Clear chat history">🗑️</button>
+                <button id="exportChatButton" class="status-action-button" title="Export conversation">📥</button>
+            </div>
+        </div>
+
+        <div id="loginPrompt" class="login-prompt" style="display: none;">
+            <div class="login-content">
+                <h2>🔐 Authentication Required</h2>
+                <p>Please login with Okta to access the chat interface.</p>
+                <button id="promptLoginButton" class="primary-button">Login with Okta</button>
+            </div>
+        </div>
+
+        <div class="chat-container" id="chatContainer">
+            <div class="message system">
+                <div class="message-content">
+                    Welcome! I'm your AI Agent<br>
+                    Try: "create a todo to buy groceries" or "show me all my todos"
+                </div>
+            </div>
+        </div>
+
+        <div class="input-container">
+            <input 
+                type="text" 
+                id="messageInput" 
+                placeholder="Type your message here..."
+                autocomplete="off"
+            />
+            <button id="sendButton">Send</button>
+        </div>
+    </div>
+
+    <!-- Side Panel for Token Details -->
+    <div id="tokenPanel" class="token-panel">
+        <div class="token-panel-header">
+            <h3>🔑 ID Token Details</h3>
+            <button id="tokenPanelClose" class="close-button">✕</button>
+        </div>
+        <div class="token-panel-content">
+            <div class="token-section">
+                <h4>User Information</h4>
+                <div id="tokenUserInfo" class="token-info"></div>
+            </div>
+            <div class="token-section">
+                <h4>Token Metadata</h4>
+                <div id="tokenMetadata" class="token-info"></div>
+            </div>
+            <div class="token-section">
+                <h4>Full Token Claims</h4>
+                <button id="copyTokenButton" class="copy-button">📋 Copy Claims</button>
+                <pre id="tokenClaims" class="token-claims"></pre>
+            </div>
+            <div class="token-section">
+                <h4>Raw ID Token (JWT)</h4>
+                <div class="token-warning">⚠️ Never share your token with anyone!</div>
+                <button id="copyJwtButton" class="copy-button">📋 Copy JWT</button>
+                <div id="tokenJwt" class="token-jwt"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal for ID-JAG Token Result -->
+    <div id="idJagModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>🎯 ID-JAG Token Received</h3>
+                <button id="idJagModalClose" class="close-button">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="success-message">
+                    <span class="success-icon">✅</span>
+                    <span>Successfully exchanged ID token for ID-JAG token!</span>
+                </div>
+                <div class="token-section">
+                    <h4>Token Information</h4>
+                    <div id="idJagTokenInfo" class="token-info"></div>
+                </div>
+                <div class="token-section">
+                    <h4>ID-JAG Access Token</h4>
+                    <div class="token-warning">⚠️ This token can be used to access the target service</div>
+                    <button id="copyIdJagButton" class="copy-button">📋 Copy Token</button>
+                    <pre id="idJagTokenValue" class="token-claims"></pre>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        // Import MCP UI Web Component from served node_modules
+        import '/node_modules/@mcp-ui/client/ui-resource-renderer.wc.js';
+    </script>
+    <script src="app.js"></script>
+</body>
+</html>

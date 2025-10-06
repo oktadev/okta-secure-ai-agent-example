@@ -1,0 +1,17 @@
+node_modules/
+dist/
+build/
+.env
+.env.local
+.DS_Store
+*.log
+coverage/
+*.tsbuildinfo
+pnpm-lock.yaml
+*.sqlite
+*.db
+packages/*/node_modules/
+packages/*/dist/
+packages/*/build/
+.github/
+*.pem

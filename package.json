@@ -1,0 +1,38 @@
+{
+  "name": "okta-thread6-monorepo",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": [
+    "packages/*"
+  ],
+  "devDependencies": {
+    "@types/body-parser": "^1.19.6",
+    "@types/express": "^5.0.3",
+    "@types/express-session": "^1.18.2",
+    "@types/node": "^20.19.19",
+    "pnpm": "^8.0.0"
+  },
+  "description": "This is a TypeScript Node.js monorepo managed with pnpm workspaces.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start:agent0": "pnpm --filter agent0 run start",
+    "start:todo0": "pnpm --filter todo0 run start",
+    "build": "pnpm -r run build"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@okta/jwt-verifier": "^4.0.2",
+    "@types/axios": "^0.14.4",
+    "@types/jsonwebtoken": "^9.0.10",
+    "axios": "^1.12.2",
+    "cors": "^2.8.5",
+    "express": "^5.1.0",
+    "express-session": "^1.18.2",
+    "id-assert-authz-grant-client": "*",
+    "jsonwebtoken": "^9.0.2",
+    "mcp-auth": "^0.1.1"
+  }
+}

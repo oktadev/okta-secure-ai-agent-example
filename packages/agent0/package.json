@@ -1,0 +1,41 @@
+{
+  "name": "agent0",
+  "version": "1.0.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "start:server": "node dist/server.js",
+    "start:client": "node dist/client.js",
+    "dev:server": "tsc && node dist/server.js",
+    "dev:client": "tsc && node dist/client.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.0",
+    "@mcp-ui/client": "^5.12.1",
+    "@modelcontextprotocol/sdk": "^1.19.1",
+    "@okta/okta-auth-js": "^7.14.0",
+    "atko-cross-app-access-sdk": "1.0.0-beta.2",
+    "axios": "^1.12.2",
+    "cookie-parser": "^1.4.7",
+    "dotenv": "^17.2.3",
+    "express": "^4.18.2",
+    "express-session": "^1.18.2",
+    "id-assert-authz-grant-client": "^0.0.1-security",
+    "install": "^0.13.0",
+    "jose": "^6.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "marked": "^16.4.0",
+    "npm": "^11.6.2",
+    "open": "^10.2.0",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/cookie-parser": "^1.4.9",
+    "@types/dotenv": "^8.2.3",
+    "@types/express": "^4.17.21",
+    "@types/express-session": "^1.18.2",
+    "@types/node": "^20.19.19",
+    "typescript": "^5.9.3"
+  }
+}
