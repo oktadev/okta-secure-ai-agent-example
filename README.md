@@ -123,6 +123,12 @@ graph TB
 pnpm install
 ```
 
+### Bootstrap prisma client
+
+```sh
+pnpm boostrap
+```
+
 ### Start REST API (todo0)
 
 ```sh
