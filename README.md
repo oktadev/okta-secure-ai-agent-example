@@ -135,10 +135,10 @@ pnpm boostrap
 pnpm run start:todo0
 ```
 
-### Start MCP Server (agent0)
+### Start MCP Server (todo0)
 
 ```sh
-pnpm run start:agent0
+pnpm run start:mcp
 ```
 
 ### Start MCP Client (agent0)
@@ -153,41 +153,32 @@ Each package has its own `.env.example` file. Copy it to `.env` and configure wi
 
 ### agent0 Environment Variables
 
-**MCP Server Configuration:**
-- `PORT`: Server port (default: 3000)
+**MCP Client Configuration:**
+
 - `ANTHROPIC_API_KEY`: Your Anthropic API key
 - `ANTHROPIC_MODEL`: Claude model to use (default: claude-3-5-sonnet-20241022)
 
 **Okta OAuth Configuration:**
+
 - `OKTA_DOMAIN`: Your Okta domain (e.g., dev-12345.okta.com)
 - `OKTA_CLIENT_ID`: OAuth client ID for user authentication
 - `OKTA_CLIENT_SECRET`: OAuth client secret
-- `OKTA_REDIRECT_URI`: OAuth callback URL (default: http://localhost:3000/callback)
-- `OKTA_ISSUER`: Okta issuer URL (e.g., https://your_okta_domain/oauth2/default)
-- `OKTA_TOKEN_ENDPOINT`: Okta token endpoint URL
-
-**Okta Client Credentials (for service-to-service auth):**
-- `AI_AGENT_ID`: Client ID for the AI agent service account
-- `OKTA_CC_PRIVATE_KEY_FILE`: Path to private key file for JWT authentication
-
-**Todo API Configuration:**
-- `TODO_API_BASE_URL`: Base URL for the todo API (default: http://localhost:3001)
-- `TODO_ACCESS_TOKEN`: Access token for todo API (optional, can be obtained via OAuth flow)
-
-**Service Authentication:**
-- `TARGET_SERVICE_AUDIENCE`: Target audience for service tokens (default: api://default)
-- `EXPECTED_AUDIENCE`: Expected audience in JWT validation (default: api://default)
-- `RESOURCE_TOKEN_ENDPOINT`: Token endpoint for resource server authentication
-
-**Session Configuration:**
-- `SESSION_SECRET`: Secret key for session encryption
+- `OKTA_REDIRECT_URI`: OAuth callback URL
+- `MCP_SERVER_URL`: URL to the MCP server (default: <http://localhost:3001/sse>)
 
 ### todo0 Environment Variables
+
+**REST API Configuration:**
 
 - `PORT`: API server port (default: 5001)
 - `OKTA_ISSUER`: Okta issuer URL for JWT validation
 - `OKTA_CLIENT_ID`: OAuth client ID
 - `EXPECTED_AUDIENCE`: Expected audience in JWT validation (default: api://default)
+
+**MCP Server Configuration:**
+
+- `TODO_API_BASE_URL`: Base URL for the todo API (default: <http://localhost:5001>)
+- `TODO_ACCESS_TOKEN`: Access token for todo API authentication
 
 ## Notes
 

@@ -5,9 +5,7 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
-    "start:server": "node dist/server.js",
     "start:client": "node dist/client.js",
-    "dev:server": "tsc && node dist/server.js",
     "dev:client": "tsc && node dist/client.js"
   },
   "dependencies": {

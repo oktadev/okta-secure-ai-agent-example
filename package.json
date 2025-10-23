@@ -16,8 +16,9 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start:agent0": "pnpm --filter agent0 run start:server",
-    "start:todo0": "pnpm --filter todo0 run start:server",
+    "start:todo0": "pnpm --filter todo0 run start",
+    "start:mcp": "pnpm --filter todo0 run start:mcp",
+    "start:client0": "pnpm --filter agent0 run start:client",
     "bootstrap": "pnpm --filter todo0 run generate:schema",
     "build": "pnpm -r run build"
   },
