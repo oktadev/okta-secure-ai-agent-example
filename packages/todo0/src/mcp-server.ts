@@ -22,35 +22,27 @@ class TodoService {
   private baseUrl: string;
 
   constructor() {
-    this.baseUrl = process.env.TODO_API_BASE_URL || 'http://localhost:3001';
-    
-    const initialToken = process.env.TODO_ACCESS_TOKEN || '';
-    if (!initialToken) {
-      console.warn('WARNING: TODO_ACCESS_TOKEN not set in environment variables');
-      console.warn('You can obtain a token by using the Cross-App Access button in the UI');
-    }
+    this.baseUrl = process.env.TODO_API_BASE_URL || 'http://localhost:5001';
   }
 
-  // Get access token dynamically to allow runtime updates
-  private getAccessToken(): string {
-    return process.env.TODO_ACCESS_TOKEN || '';
-  }
-
-  private getHeaders() {
-    const token = this.getAccessToken();
-    if (!token) {
-      console.warn('⚠️  No access token available - API calls may fail');
-    }
-    return {
-      'Authorization': `Bearer ${token}`,
+  private getHeaders(accessToken?: string) {
+    const headers: Record<string, string> = {
       'Content-Type': 'application/json',
     };
+
+    if (accessToken) {
+      headers['Authorization'] = `Bearer ${accessToken}`;
+    } else {
+      console.warn('⚠️  No access token provided - API calls may fail');
+    }
+
+    return headers;
   }
 
-  async getAllTodos(): Promise<Todo[]> {
+  async getAllTodos(accessToken?: string): Promise<Todo[]> {
     try {
       const response = await axios.get(`${this.baseUrl}/todos`, {
-        headers: this.getHeaders(),
+        headers: this.getHeaders(accessToken),
       });
       return response.data.todos;
     } catch (error: any) {
@@ -58,12 +50,12 @@ class TodoService {
     }
   }
 
-  async createTodo(title: string): Promise<Todo> {
+  async createTodo(title: string, accessToken?: string): Promise<Todo> {
     try {
       const response = await axios.post(
         `${this.baseUrl}/todos`,
         { title },
-        { headers: this.getHeaders() }
+        { headers: this.getHeaders(accessToken) }
       );
       return response.data.todo;
     } catch (error: any) {
@@ -71,12 +63,12 @@ class TodoService {
     }
   }
 
-  async toggleTodo(id: number): Promise<Todo> {
+  async toggleTodo(id: number, accessToken?: string): Promise<Todo> {
     try {
       const response = await axios.post(
         `${this.baseUrl}/todos/${id}/complete`,
         {},
-        { headers: this.getHeaders() }
+        { headers: this.getHeaders(accessToken) }
       );
       return response.data.todo;
     } catch (error: any) {
@@ -84,12 +76,12 @@ class TodoService {
     }
   }
 
-  async deleteTodo(id: number): Promise<{ message: string }> {
+  async deleteTodo(id: number, accessToken?: string): Promise<{ message: string }> {
     try {
       const response = await axios.post(
         `${this.baseUrl}/todos/${id}/delete`,
         {},
-        { headers: this.getHeaders() }
+        { headers: this.getHeaders(accessToken) }
       );
       return response.data;
     } catch (error: any) {
@@ -133,26 +125,28 @@ server.tool(
   createTodoParams,
   async ({ title }, _extra) => {
     try {
-      const todo = await todoService.createTodo(title);
-      
+      // Extract access token from metadata if provided
+      const accessToken = (_extra as any)?.meta?.progressToken;
+      const todo = await todoService.createTodo(title, accessToken);
+
       return {
-        content: [{ 
-          type: 'text', 
-          text: JSON.stringify({ 
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
             success: true,
             todo,
             message: 'Todo created successfully'
-          }) 
+          })
         }],
       };
     } catch (error) {
       return {
-        content: [{ 
-          type: 'text', 
-          text: JSON.stringify({ 
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
             error: 'Internal Server Error',
             message: error instanceof Error ? error.message : 'Unknown error'
-          }) 
+          })
         }],
         isError: true,
       };
@@ -170,27 +164,29 @@ server.tool(
   emptyParams,
   async (_args, _extra) => {
     try {
-      const todos = await todoService.getAllTodos();
+      // Extract access token from metadata if provided
+      const accessToken = (_extra as any)?.meta?.progressToken;
+      const todos = await todoService.getAllTodos(accessToken);
 
       return {
-        content: [{ 
-          type: 'text', 
-          text: JSON.stringify({ 
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
             success: true,
             todos,
             count: todos.length,
             message: 'Retrieved all todos'
-          }) 
+          })
         }],
       };
     } catch (error) {
       return {
-        content: [{ 
-          type: 'text', 
-          text: JSON.stringify({ 
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
             error: 'Internal Server Error',
             message: error instanceof Error ? error.message : 'Unknown error'
-          }) 
+          })
         }],
         isError: true,
       };
@@ -208,26 +204,28 @@ server.tool(
   toggleTodoParams,
   async ({ id }, _extra) => {
     try {
-      const todo = await todoService.toggleTodo(id);
-      
+      // Extract access token from metadata if provided
+      const accessToken = (_extra as any)?.meta?.progressToken;
+      const todo = await todoService.toggleTodo(id, accessToken);
+
       return {
-        content: [{ 
-          type: 'text', 
-          text: JSON.stringify({ 
-            success: true, 
-            todo, 
-            message: 'Todo completion status toggled' 
-          }) 
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: true,
+            todo,
+            message: 'Todo completion status toggled'
+          })
         }],
       };
     } catch (error) {
       return {
-        content: [{ 
-          type: 'text', 
-          text: JSON.stringify({ 
-            error: 'Internal Server Error', 
-            message: error instanceof Error ? error.message : 'Unknown error' 
-          }) 
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            error: 'Internal Server Error',
+            message: error instanceof Error ? error.message : 'Unknown error'
+          })
         }],
         isError: true,
       };
@@ -245,25 +243,27 @@ server.tool(
   deleteTodoParams,
   async ({ id }, _extra) => {
     try {
-      const result = await todoService.deleteTodo(id);
-      
+      // Extract access token from metadata if provided
+      const accessToken = (_extra as any)?.meta?.progressToken;
+      const result = await todoService.deleteTodo(id, accessToken);
+
       return {
-        content: [{ 
-          type: 'text', 
-          text: JSON.stringify({ 
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
             success: true,
             message: result.message
-          }) 
+          })
         }],
       };
     } catch (error) {
       return {
-        content: [{ 
-          type: 'text', 
-          text: JSON.stringify({ 
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
             error: 'Internal Server Error',
             message: error instanceof Error ? error.message : 'Unknown error'
-          }) 
+          })
         }],
         isError: true,
       };
@@ -276,7 +276,7 @@ server.tool(
 // ============================================================================
 
 async function bootstrap(): Promise<void> {
-  const PORT = process.env.PORT || 3001; // Changed to 3001 to avoid conflict with client
+  const PORT = process.env.MCP_PORT || 3001;
   const app = express();
   const transports = new Map<string, SSEServerTransport>();
 
@@ -329,8 +329,8 @@ async function bootstrap(): Promise<void> {
     console.log('='.repeat(60));
     console.log('Configuration:');
     console.log(`  - Port: ${PORT}`);
-    console.log(`  - Todo API: ${process.env.TODO_API_BASE_URL || 'http://localhost:3001'}`);
-    console.log(`  - Access Token: ${process.env.TODO_ACCESS_TOKEN ? '✓ Set' : '✗ Not Set'}`);
+    console.log(`  - Todo API: ${process.env.TODO_API_BASE_URL || 'http://localhost:5001'}`);
+    console.log(`  - Auth: Tokens passed per-request via MCP protocol`);
     console.log('='.repeat(60));
     console.log('Available Tools:');
     console.log('  1. create-todo  - Create a new todo');
@@ -341,66 +341,6 @@ async function bootstrap(): Promise<void> {
     console.log('Ready to accept connections! 🎉');
     console.log('');
   });
-}
-
-// Helper function to execute tools directly
-async function executeTool(toolName: string, args: any) {
-  switch (toolName) {
-    case 'create-todo':
-      const todo = await todoService.createTodo(args.title);
-      return {
-        content: [{ 
-          type: 'text', 
-          text: JSON.stringify({ 
-            success: true,
-            todo,
-            message: 'Todo created successfully'
-          }) 
-        }],
-      };
-      
-    case 'get-todos':
-      const todos = await todoService.getAllTodos();
-      return {
-        content: [{ 
-          type: 'text', 
-          text: JSON.stringify({ 
-            success: true,
-            todos,
-            count: todos.length,
-            message: 'Retrieved all todos'
-          }) 
-        }],
-      };
-      
-    case 'toggle-todo':
-      const toggleTodo = await todoService.toggleTodo(args.id);
-      return {
-        content: [{ 
-          type: 'text', 
-          text: JSON.stringify({ 
-            success: true, 
-            todo: toggleTodo, 
-            message: 'Todo completion status toggled' 
-          }) 
-        }],
-      };
-      
-    case 'delete-todo':
-      const deleteResult = await todoService.deleteTodo(args.id);
-      return {
-        content: [{ 
-          type: 'text', 
-          text: JSON.stringify({ 
-            success: true,
-            message: deleteResult.message
-          }) 
-        }],
-      };
-      
-    default:
-      throw new Error(`Unknown tool: ${toolName}`);
-  }
 }
 
 bootstrap().catch((error) => {
