@@ -1,5 +1,9 @@
 import { Request, Response, NextFunction } from 'express';
 import OktaJwtVerifier from '@okta/jwt-verifier';
+import * as dotenv from 'dotenv'; 
+
+// Load environment variables
+dotenv.config();
 
 // Use environment variables for configuration
 const OKTA_ISSUER = process.env.OKTA_ISSUER ?? '{yourIssuerUrl}';
