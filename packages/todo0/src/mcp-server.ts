@@ -5,9 +5,10 @@ import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import express from 'express';
 import * as dotenv from 'dotenv';
 import axios from 'axios';
+import * as path from 'path';
 
 // Load environment variables
-dotenv.config();
+dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
 interface Todo {
   id: number;
@@ -126,7 +127,7 @@ server.tool(
   async ({ title }, _extra) => {
     try {
       // Extract access token from metadata if provided
-      const accessToken = (_extra as any)?.meta?.progressToken;
+      const accessToken = _extra.requestInfo?.headers['authorization']?.toString().replace('Bearer ', '');
       const todo = await todoService.createTodo(title, accessToken);
 
       return {
@@ -165,7 +166,7 @@ server.tool(
   async (_args, _extra) => {
     try {
       // Extract access token from metadata if provided
-      const accessToken = (_extra as any)?.meta?.progressToken;
+      const accessToken = _extra.requestInfo?.headers['authorization']?.toString().replace('Bearer ', '');
       const todos = await todoService.getAllTodos(accessToken);
 
       return {
@@ -204,8 +205,7 @@ server.tool(
   toggleTodoParams,
   async ({ id }, _extra) => {
     try {
-      // Extract access token from metadata if provided
-      const accessToken = (_extra as any)?.meta?.progressToken;
+      const accessToken = _extra.requestInfo?.headers['authorization']?.toString().replace('Bearer ', '');
       const todo = await todoService.toggleTodo(id, accessToken);
 
       return {
@@ -243,8 +243,7 @@ server.tool(
   deleteTodoParams,
   async ({ id }, _extra) => {
     try {
-      // Extract access token from metadata if provided
-      const accessToken = (_extra as any)?.meta?.progressToken;
+      const accessToken = _extra.requestInfo?.headers['authorization']?.toString().replace('Bearer ', '');
       const result = await todoService.deleteTodo(id, accessToken);
 
       return {
@@ -276,7 +275,7 @@ server.tool(
 // ============================================================================
 
 async function bootstrap(): Promise<void> {
-  const PORT = process.env.MCP_PORT || 3001;
+  const MCP_PORT = process.env.MCP_PORT || 3001;
   const app = express();
   const transports = new Map<string, SSEServerTransport>();
 
@@ -319,16 +318,16 @@ async function bootstrap(): Promise<void> {
     });
   });
 
-  app.listen(PORT, () => {
+  app.listen(MCP_PORT, () => {
     console.log('='.repeat(60));
     console.log('🚀 MCP Todo Server');
     console.log('='.repeat(60));
-    console.log(`✓ Server running on http://localhost:${PORT}`);
-    console.log(`✓ SSE endpoint: http://localhost:${PORT}/sse`);
-    console.log(`✓ Messages endpoint: http://localhost:${PORT}/messages`);
+    console.log(`✓ Server running on http://localhost:${MCP_PORT}`);
+    console.log(`✓ SSE endpoint: http://localhost:${MCP_PORT}/sse`);
+    console.log(`✓ Messages endpoint: http://localhost:${MCP_PORT}/messages`);
     console.log('='.repeat(60));
     console.log('Configuration:');
-    console.log(`  - Port: ${PORT}`);
+    console.log(`  - MCP Server Port: ${MCP_PORT}`);
     console.log(`  - Todo API: ${process.env.TODO_API_BASE_URL || 'http://localhost:5001'}`);
     console.log(`  - Auth: Tokens passed per-request via MCP protocol`);
     console.log('='.repeat(60));
