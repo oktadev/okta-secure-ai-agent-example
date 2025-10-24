@@ -7,7 +7,7 @@ import todosRouter from './routes/todos';
 import authRouter from './routes/auth';
 
 // Load environment variables
-dotenv.config();
+dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
 declare module 'express-session' {
   interface SessionData {
