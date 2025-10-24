@@ -8,7 +8,8 @@
     "start": "node dist/index.js",
     "start:mcp": "node dist/mcp-server.js",
     "dev:mcp": "tsc && node dist/mcp-server.js",
-    "generate:schema": "prisma generate"
+    "generate:client": "prisma generate",
+    "migrate:dev": "prisma migrate dev"
   },
   "devDependencies": {
     "@types/node": "^20.19.19",
