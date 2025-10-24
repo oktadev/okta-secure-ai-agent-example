@@ -2,7 +2,7 @@
 import express, { Request, Response } from 'express';
 import * as path from 'path';
 import cookieParser from 'cookie-parser';
-import { Agent, UserContext } from './agent.js';
+import { getAgentForSession, UserContext } from './agent.js';
 import { OktaAuthHelper, OktaConfig, createSessionMiddleware } from './auth/okta-auth.js';
 import { TokenExchangeHandler, TokenExchangeConfig, createTokenExchangeConfig } from './auth/token-exchange.js';
 
@@ -23,14 +23,24 @@ export interface ResourceServerConfig {
 export class ResourceServer {
   private app: express.Application;
   private config: ResourceServerConfig;
-  private agent: Agent;
   private oktaAuthHelper: OktaAuthHelper | null = null;
   private tokenExchangeHandler: TokenExchangeHandler | null = null;
 
-  constructor(config: ResourceServerConfig, agent: Agent) {
+  constructor(config: ResourceServerConfig) {
     this.config = config;
-    this.agent = agent;
     this.app = express();
+
+    // Initialize Okta Auth if configured
+    if (this.config.okta) {
+      this.oktaAuthHelper = new OktaAuthHelper(this.config.okta);
+    }
+
+    // Initialize Token Exchange if configured
+    const tokenExchangeConfig = createTokenExchangeConfig();
+    if (tokenExchangeConfig) {
+      this.tokenExchangeHandler = new TokenExchangeHandler(tokenExchangeConfig);
+    }
+
     this.setupMiddleware();
     this.setupRoutes();
   }
@@ -55,17 +65,6 @@ export class ResourceServer {
         next();
       }
     });
-
-    // Initialize Okta Auth if configured
-    if (this.config.okta) {
-      this.oktaAuthHelper = new OktaAuthHelper(this.config.okta);
-    }
-
-    // Initialize Token Exchange if configured
-    const tokenExchangeConfig = createTokenExchangeConfig();
-    if (tokenExchangeConfig) {
-      this.tokenExchangeHandler = new TokenExchangeHandler(tokenExchangeConfig);
-    }
 
     // Serve static files (web UI)
     const publicPath = path.join(__dirname, '..', 'public');
@@ -129,10 +128,6 @@ export class ResourceServer {
         // Wrap the original response to intercept the access token
         const originalJson = res.json.bind(res);
         res.json = (body: any) => {
-          // If the token exchange was successful, set it in the Agent
-          if (body.success && body.access_token) {
-            this.agent.setAccessToken(body.access_token);
-          }
           return originalJson(body);
         };
 
@@ -163,7 +158,9 @@ export class ResourceServer {
           });
         }
 
-        if (!this.agent.isLLMEnabled()) {
+        const agent = await getAgentForSession(req);
+
+        if (!agent || !agent.isLLMEnabled()) {
           return res.status(503).json({
             success: false,
             error: 'Service Unavailable',
@@ -171,21 +168,8 @@ export class ResourceServer {
           });
         }
 
-        // Get user info from session if authenticated
-        let userContext: UserContext | null = null;
-        if (this.oktaAuthHelper) {
-          const userInfo = this.oktaAuthHelper.getUserInfo(req);
-          if (userInfo) {
-            userContext = {
-              email: userInfo.email,
-              name: userInfo.name || userInfo.email,
-              sub: userInfo.sub,
-            };
-          }
-        }
-
         // Process message with agent
-        const result = await this.agent.processUserInput(message, userContext);
+        const result = await agent.processUserInput(message);
         res.json(result);
       } catch (error: any) {
         console.error('Chat API error:', error);
@@ -206,9 +190,8 @@ export class ResourceServer {
     res.json({
       status: 'ok',
       service: 'agent0 Resource Server',
-      llmEnabled: this.agent.isLLMEnabled(),
-      mcpConnected: this.agent.isAgentConnected(),
       oktaEnabled: this.oktaAuthHelper ? true : false,
+      llmEnabled: true,
       timestamp: new Date().toISOString(),
     });
   }
@@ -230,8 +213,6 @@ export class ResourceServer {
         console.log('='.repeat(60));
         console.log('Configuration:');
         console.log(`  - Port: ${this.config.port}`);
-        console.log(`  - LLM Enabled: ${this.agent.isLLMEnabled() ? '✅ Yes (Claude)' : '❌ No'}`);
-        console.log(`  - MCP Connected: ${this.agent.isAgentConnected() ? '✅ Yes' : '❌ No'}`);
         console.log(`  - Okta Auth: ${this.oktaAuthHelper ? '✅ Enabled' : '❌ Disabled'}`);
         if (this.oktaAuthHelper && this.config.okta) {
           console.log(`  - Okta Domain: ${this.config.okta.domain}`);
