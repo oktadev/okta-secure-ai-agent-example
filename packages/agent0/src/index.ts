@@ -1,11 +1,12 @@
 // index.ts - Main Entry Point for Agent0
+import path from 'path';
 import * as dotenv from 'dotenv';
-import { Agent, AgentConfig } from './agent.js';
+import { disconnectAll } from './agent.js';
 import { ResourceServer, ResourceServerConfig } from './resource-server.js';
 import { OktaConfig } from './auth/okta-auth.js';
 
 // Load environment variables
-dotenv.config();
+dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
 // ============================================================================
 // Main Bootstrap Function
@@ -13,29 +14,6 @@ dotenv.config();
 
 async function bootstrap(): Promise<void> {
   console.log('🚀 Starting Agent0...\n');
-
-  // ============================================================================
-  // 1. Configure and Initialize Agent (MCP Client + LLM)
-  // ============================================================================
-
-  const agentConfig: AgentConfig = {
-    mcpServerUrl: process.env.MCP_SERVER_URL || 'http://localhost:3001',
-    name: 'agent0',
-    version: '1.0.0',
-    anthropicApiKey: process.env.ANTHROPIC_API_KEY,
-    anthropicModel: process.env.ANTHROPIC_MODEL || 'claude-3-5-sonnet-20241022',
-    enableLLM: true,
-  };
-
-  const agent = new Agent(agentConfig);
-
-  // Connect to MCP server
-  try {
-    await agent.connect();
-  } catch (error) {
-    console.error('❌ Failed to connect to MCP server. Continuing without MCP...');
-    console.error('   Make sure the MCP server is running on', agentConfig.mcpServerUrl);
-  }
 
   // ============================================================================
   // 2. Configure and Start Resource Server
@@ -59,7 +37,7 @@ async function bootstrap(): Promise<void> {
     } as OktaConfig;
   }
 
-  const resourceServer = new ResourceServer(resourceServerConfig, agent);
+  const resourceServer = new ResourceServer(resourceServerConfig);
 
   // Start the resource server
   await resourceServer.start();
@@ -79,13 +57,13 @@ async function bootstrap(): Promise<void> {
 
   process.on('SIGINT', async () => {
     console.log('\n\n👋 Shutting down gracefully...');
-    await agent.disconnect();
+    await disconnectAll();
     process.exit(0);
   });
 
   process.on('SIGTERM', async () => {
     console.log('\n\n👋 Shutting down gracefully...');
-    await agent.disconnect();
+    await disconnectAll();
     process.exit(0);
   });
 }
@@ -102,4 +80,7 @@ if (require.main === module) {
 }
 
 // Export for programmatic use
-export { Agent, ResourceServer, AgentConfig, ResourceServerConfig };
+export { 
+  ResourceServer, 
+  ResourceServerConfig
+};

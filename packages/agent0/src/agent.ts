@@ -66,7 +66,6 @@ export function getAgentForUserContext(idToken: string, userContext: UserContext
   });
 }
 
-
 const subjectToAgent = new Map<string, Agent>();
 
 export async function getAgentForSession (req: Request): Promise<Agent | null> {
@@ -96,6 +95,13 @@ export async function getAgentForSession (req: Request): Promise<Agent | null> {
 
   return agent;
 };
+
+export async function disconnectAll(): Promise<void> {
+  for (const agent of subjectToAgent.values()) {
+    await agent.disconnect();
+  }
+  subjectToAgent.clear();
+}
 
 // ============================================================================
 // Agent Class - MCP Client + LLM Integration
