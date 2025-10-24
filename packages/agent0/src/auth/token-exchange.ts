@@ -13,6 +13,7 @@ export interface TokenExchangeConfig {
   oktaDomain: string;
   clientId: string;
   privateKeyFile: string;
+  privateKeyKid: string;
   targetAudience: string;
   tokenEndpoint: string;
   resourceTokenEndpoint?: string;
@@ -61,7 +62,7 @@ export class TokenExchangeHandler {
       audience,
       issuer: this.config.clientId,
       subject: this.config.clientId,
-      keyid: '{yourKID}',
+      keyid: this.config.privateKeyKid,
     };
 
     return jwt.sign(jwtPayload, this.privateKey, signingOptions);
@@ -82,7 +83,7 @@ export class TokenExchangeHandler {
     formData.append('subject_token', idToken);
     formData.append('subject_token_type', 'urn:ietf:params:oauth:token-type:id_token');
     formData.append('audience', this.config.targetAudience);
-    formData.append('client_id', this.config.clientId);
+    // formData.append('client_id', this.config.clientId);
     formData.append('scope', 'read:todo0');
     formData.append('client_assertion_type', 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer');
     formData.append('client_assertion', clientAssertion);
@@ -149,7 +150,70 @@ export class TokenExchangeHandler {
   }
 
   // ============================================================================
-  // Full Token Exchange Flow
+  // Token Exchange Flow (Programmatic)
+  // ============================================================================
+
+  async exchangeToken(idToken: string): Promise<{
+    success: boolean;
+    id_jag: string;
+    access_token?: string;
+    token_type?: string;
+    expires_in?: number;
+    scope?: string;
+    issued_token_type: string;
+    note?: string;
+    error?: any;
+  }> {
+    if (!this.privateKey) {
+      throw new Error('Cross-app access not configured properly. Private key not loaded.');
+    }
+
+    console.log(`👻 Subject token: ${idToken}`);
+
+    try {
+      // Step 1: Exchange ID token for ID-JAG
+      const idJag = await this.exchangeIdTokenForIdJag(idToken);
+
+      // Step 2: Exchange ID-JAG for Access Token
+      try {
+        const accessTokenResponse = await this.exchangeIdJagForAccessToken(idJag);
+
+        // Return the access token
+        const accessToken = accessTokenResponse.access_token;
+        console.log('✅ Access token obtained successfully');
+        console.log('💡 Token can be used for MCP tool calls');
+
+        return {
+          success: true,
+          id_jag: idJag,
+          access_token: accessToken,
+          token_type: accessTokenResponse.token_type,
+          expires_in: accessTokenResponse.expires_in,
+          scope: accessTokenResponse.scope,
+          issued_token_type: 'urn:ietf:params:oauth:token-type:id-jag',
+        };
+      } catch (resourceError: any) {
+        console.error('❌ Failed to exchange ID-JAG for Access Token:', resourceError.response?.data || resourceError.message);
+
+        // If the second step fails, return the ID-JAG anyway
+        return {
+          success: true,
+          id_jag: idJag,
+          issued_token_type: 'urn:ietf:params:oauth:token-type:id-jag',
+          note: 'ID-JAG obtained successfully, but Access Token exchange failed',
+          error: resourceError.response?.data || resourceError.message,
+        };
+      }
+    } catch (error: any) {
+      console.error('Token exchange request failed:', error.response?.data || error.message);
+      throw new Error(
+        `Token exchange request failed: ${error.response?.data?.error_description || error.message}`
+      );
+    }
+  }
+
+  // ============================================================================
+  // Full Token Exchange Flow (Express Handler)
   // ============================================================================
 
   async handleCrossAppAccess(req: Request, res: Response): Promise<void> {
@@ -165,56 +229,15 @@ export class TokenExchangeHandler {
         return;
       }
 
-      if (!this.privateKey) {
-        res.status(500).json({
-          success: false,
-          error: 'Cross-app access not configured properly. Private key not loaded.',
-        });
-        return;
-      }
-
-      console.log(`👻 Subject token: ${idToken}`);
-
+      // Use the programmatic exchangeToken method
       try {
-        // Step 1: Exchange ID token for ID-JAG
-        const idJag = await this.exchangeIdTokenForIdJag(idToken);
-
-        // Step 2: Exchange ID-JAG for Access Token
-        try {
-          const accessTokenResponse = await this.exchangeIdJagForAccessToken(idJag);
-
-          // Return the access token so the Resource Server can set it in the Agent
-          const accessToken = accessTokenResponse.access_token;
-          console.log('✅ Access token obtained successfully');
-          console.log('💡 Token will be set in Agent for MCP tool calls');
-
-          res.json({
-            success: true,
-            id_jag: idJag,
-            access_token: accessToken,
-            token_type: accessTokenResponse.token_type,
-            expires_in: accessTokenResponse.expires_in,
-            scope: accessTokenResponse.scope,
-            issued_token_type: 'urn:ietf:params:oauth:token-type:id-jag',
-          });
-        } catch (resourceError: any) {
-          console.error('❌ Failed to exchange ID-JAG for Access Token:', resourceError.response?.data || resourceError.message);
-
-          // If the second step fails, return the ID-JAG anyway
-          res.json({
-            success: true,
-            id_jag: idJag,
-            issued_token_type: 'urn:ietf:params:oauth:token-type:id-jag',
-            note: 'ID-JAG obtained successfully, but Access Token exchange failed',
-            error: resourceError.response?.data || resourceError.message,
-          });
-        }
+        const result = await this.exchangeToken(idToken);
+        res.json(result);
       } catch (error: any) {
-        console.error('Token exchange request failed:', error.response?.data || error.message);
         res.status(500).json({
           success: false,
-          error: 'Token exchange request failed',
-          details: error.response?.data || error.message,
+          error: 'Token exchange failed',
+          details: error.message || 'Unknown error',
         });
       }
     } catch (error: any) {
@@ -238,9 +261,11 @@ export function createTokenExchangeConfig(): TokenExchangeConfig | null {
   const clientId = process.env.AI_AGENT_ID;
   const oktaDomain = process.env.OKTA_DOMAIN;
   const privateKeyFile = process.env.OKTA_CC_PRIVATE_KEY_FILE;
+  const privateKeyKid = process.env.OKTA_PRIVATE_KEY_KID;
 
-  if (!targetAudience || !tokenEndpoint || !clientId || !oktaDomain || !privateKeyFile) {
+  if (!targetAudience || !tokenEndpoint || !clientId || !oktaDomain || !privateKeyFile || !privateKeyKid) {
     console.warn('⚠️  Cross-app access not fully configured. Missing required environment variables.');
+    console.warn('   Required: TARGET_SERVICE_AUDIENCE, OKTA_TOKEN_ENDPOINT, AI_AGENT_ID, OKTA_DOMAIN, OKTA_CC_PRIVATE_KEY_FILE, OKTA_PRIVATE_KEY_KID');
     return null;
   }
 
@@ -248,6 +273,7 @@ export function createTokenExchangeConfig(): TokenExchangeConfig | null {
     oktaDomain,
     clientId,
     privateKeyFile,
+    privateKeyKid,
     targetAudience,
     tokenEndpoint,
     resourceTokenEndpoint: process.env.RESOURCE_TOKEN_ENDPOINT,
