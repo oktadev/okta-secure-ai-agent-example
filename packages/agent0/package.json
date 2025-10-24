@@ -6,12 +6,11 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "start:client": "node dist/index.js",
-    "dev": "tsc && node dist/index.js",
-    "dev:client": "tsc && node dist/index.js"
+    "dev": "tsc && node dist/index.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.709.0",
     "@mcp-ui/client": "^5.12.1",
     "@modelcontextprotocol/sdk": "^1.19.1",
     "@okta/okta-auth-js": "^7.14.0",
