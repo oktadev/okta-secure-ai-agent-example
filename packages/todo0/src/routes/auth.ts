@@ -1,18 +1,26 @@
 import { Router } from 'express';
 import { OktaAuth } from '@okta/okta-auth-js';
+import * as dotenv from 'dotenv'; 
 
-const OKTA_DOMAIN = '{yourOktaDomain}';
-const OKTA_CLIENT_ID = '{yourClientID}';
-const OKTA_CLIENT_SECRET = '{yourClientSecret}';
-const OKTA_ISSUER = '{yourOktaIssuer}';
-const REDIRECT_URI = '{yourRedirectUri}';
+// Load environment variables
+dotenv.config();
+
+const OKTA_ISSUER = process.env.OKTA_ISSUER ?? '{yourIssuerUrl}';
+const OKTA_CLIENT_ID = process.env.OKTA_CLIENT_ID ?? '{yourClientId}';
+const OKTA_CLIENT_SECRET = process.env.OKTA_CLIENT_SECRET ?? '{yourClientSecret}';
+const OKTA_REDIRECT_URI = process.env.OKTA_REDIRECT_URI ?? '{yourRedirectUri}';
+
+console.log('🔐 Okta Auth Configuration:');
+console.log(`   Issuer: ${OKTA_ISSUER}`);
+console.log(`   Client ID: ${OKTA_CLIENT_ID}`);
+console.log(`   Redirect URI: ${OKTA_REDIRECT_URI}`);
 
 // Initialize OktaAuth for server-side use
 const oktaAuth = new OktaAuth({
   issuer: OKTA_ISSUER,
   clientId: OKTA_CLIENT_ID,
   clientSecret: OKTA_CLIENT_SECRET,
-  redirectUri: REDIRECT_URI,
+  redirectUri: OKTA_REDIRECT_URI,
 });
 
 const router = Router();
@@ -37,7 +45,7 @@ router.get('/login', async (req, res) => {
       `client_id=${OKTA_CLIENT_ID}` +
       `&response_type=code` +
       `&scope=${encodeURIComponent('openid profile email')}` +
-      `&redirect_uri=${encodeURIComponent(REDIRECT_URI)}` +
+      `&redirect_uri=${encodeURIComponent(OKTA_REDIRECT_URI)}` +
       `&state=${state}` +
       `&code_challenge=${codeChallenge}` +
       `&code_challenge_method=S256`;
@@ -46,6 +54,7 @@ router.get('/login', async (req, res) => {
     console.log('[AUTH] Redirecting to:', authUrl);
     res.redirect(authUrl);
   } catch (err: any) {
+    console.error(err.stack);
     console.error('[AUTH] Login error:', err.message);
     res.status(500).send('Login failed: ' + err.message);
   }

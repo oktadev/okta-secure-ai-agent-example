@@ -21,6 +21,7 @@ router.get('/todos', requireAuth, async (req, res) => {
     const todos = await prisma.todo.findMany({ orderBy: { id: 'desc' } });
     res.json({ todos });
   } catch (error: any) {
+    console.error('Failed to fetch todos:', error);
     res.status(500).json({ error: 'Failed to fetch todos', message: error.message });
   }
 });
@@ -39,6 +40,7 @@ router.post('/todos', requireAuth, async (req, res) => {
     if (req.accepts('html')) return res.redirect('/');
     res.status(201).json({ todo });
   } catch (error: any) {
+    console.error('Failed to create todos:', error);
     if (req.accepts('html')) return res.redirect('/');
     res.status(500).json({ error: 'Failed to create todo', message: error.message });
   }
@@ -57,6 +59,7 @@ router.post('/todos/:id/complete', requireAuth, async (req, res) => {
     if (req.accepts('html')) return res.redirect('/');
     res.json({ todo: updated });
   } catch (error: any) {
+    console.error('Failed to complete todo:', error);
     if (req.accepts('html')) return res.redirect('/');
     res.status(500).json({ error: 'Failed to update todo', message: error.message });
   }
@@ -70,6 +73,7 @@ router.post('/todos/:id/delete', requireAuth, async (req, res) => {
     if (req.accepts('html')) return res.redirect('/');
     res.json({ message: 'Todo deleted successfully' });
   } catch (error: any) {
+    console.error('Failed to delete todo:', error);
     if (req.accepts('html')) return res.redirect('/');
     res.status(500).json({ error: 'Failed to delete todo', message: error.message });
   }

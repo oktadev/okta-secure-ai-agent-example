@@ -7,8 +7,8 @@
   ],
   "devDependencies": {
     "@types/body-parser": "^1.19.6",
-    "@types/express": "^5.0.3",
-    "@types/express-session": "^1.18.2",
+    "@types/express": "4.17.21",
+    "@types/express-session": "1.17.10",
     "@types/node": "^20.19.19",
     "pnpm": "^8.0.0"
   },
@@ -16,8 +16,10 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start:agent0": "pnpm --filter agent0 run start",
     "start:todo0": "pnpm --filter todo0 run start",
+    "start:mcp": "pnpm --filter todo0 run start:mcp",
+    "start:agent0": "pnpm --filter agent0 run start",
+    "bootstrap": "pnpm --filter todo0 run generate:client && pnpm --filter todo0 run migrate:dev",
     "build": "pnpm -r run build"
   },
   "keywords": [],
