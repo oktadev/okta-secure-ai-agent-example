@@ -2,7 +2,7 @@
 
 ## Overview
 
-This monorepo demonstrates a full-stack agentic application (agent0) that has a secure integration with another application's (todo0) MCP exposed resources.
+This monorepo demonstrates an agentic application (agent0) that has a secure integration with another application's (todo0) MCP exposed resources.
 
 ### Architecture
 
@@ -68,7 +68,8 @@ graph TB
   - **agent0 Agent Identity** (Registered agent in Okta):
     - MCP Client: Connects to todo0's MCP Server
     - LLM Integration: Interfaces with Anthropic's Claude API
-    - Authenticates with **Okta Custom AS** (`/oauth2/default/v1`) using Client Credentials
+    - Authenticates with **Okta Org AS** (`/oauth2/v1`) using Client Credentials to request ID-JAG.
+    - Authenticates with **Okta Custom AS** (`/oauth2/default/v1`) using Client Credentials to exchange ID-JAG for AT. 
 - todo0 Package: Port 5001 (API) / Port 3001 (MCP Server)
   - **Todo MCP Server**: Tools layer for todo operations
   - **Todo REST API**: Express + Prisma backend

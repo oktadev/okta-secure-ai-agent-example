@@ -1,7 +1,7 @@
 // agent.ts - Agent Identity: MCP Client + LLM Integration
 import path from 'path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
+import { SSEClientTransport, SSEClientTransportOptions } from '@modelcontextprotocol/sdk/client/sse.js';
 import Anthropic from '@anthropic-ai/sdk';
 import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
 import { TokenExchangeHandler, createTokenExchangeConfig } from './auth/token-exchange.js';
@@ -194,15 +194,17 @@ export class Agent {
       console.log('🔌 Connecting to MCP server...');
       console.log(`   Server: ${this.config.mcpServerUrl}`);
 
-      this.transport = new SSEClientTransport(
-        new URL(`${this.config.mcpServerUrl}/sse`),
-        {
-          requestInit: {
-            headers: {
-              'Authorization': `Bearer ${this.accessToken || ''}`,
-            }
+      const clientTransportOptions: SSEClientTransportOptions = {
+        requestInit: {
+          headers: {
+            'Authorization': `Bearer ${this.accessToken || ''}`,
           }
         }
+      };
+
+      this.transport = new SSEClientTransport(
+        new URL(`${this.config.mcpServerUrl}/sse`),
+        clientTransportOptions
       );
 
       await this.client.connect(this.transport);
