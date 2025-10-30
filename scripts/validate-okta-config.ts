@@ -64,34 +64,6 @@ function createClientAssertion(
   });
 }
 
-/**
- * Test: Validate REST API Authorization Server is reachable
- */
-async function validateRestApiAS(env: Record<string, string>): Promise<ValidationResult> {
-  try {
-    const issuer = env.MCP_OKTA_ISSUER || env.OKTA_ISSUER;
-    if (!issuer) {
-      return { passed: false, message: 'REST API issuer not configured' };
-    }
-
-    const response = await axios.get(`${issuer}/.well-known/openid-configuration`);
-    const config = response.data;
-
-    return {
-      passed: true,
-      message: 'REST API AS is reachable',
-      details: {
-        issuer: config.issuer,
-        tokenEndpoint: config.token_endpoint,
-      },
-    };
-  } catch (error: any) {
-    return {
-      passed: false,
-      message: `Failed to reach REST API AS: ${error.message}`,
-    };
-  }
-}
 
 /**
  * Test: Validate MCP Authorization Server is reachable
@@ -172,11 +144,13 @@ async function validatePrivateKey(env: Record<string, string>): Promise<Validati
  */
 async function validateEnvFiles(): Promise<ValidationResult> {
   try {
-    const agent0EnvPath = 'packages/agent0/.env';
+    const agent0AppEnvPath = 'packages/agent0/.env.app';
+    const agent0AgentEnvPath = 'packages/agent0/.env.agent';
     const todo0EnvPath = 'packages/todo0/.env';
 
     const missing: string[] = [];
-    if (!fs.existsSync(agent0EnvPath)) missing.push(agent0EnvPath);
+    if (!fs.existsSync(agent0AppEnvPath)) missing.push(agent0AppEnvPath);
+    if (!fs.existsSync(agent0AgentEnvPath)) missing.push(agent0AgentEnvPath);
     if (!fs.existsSync(todo0EnvPath)) missing.push(todo0EnvPath);
 
     if (missing.length > 0) {
@@ -187,44 +161,45 @@ async function validateEnvFiles(): Promise<ValidationResult> {
       };
     }
 
-    const agent0Env = loadEnvFile(agent0EnvPath);
+    const agent0AppEnv = loadEnvFile(agent0AppEnvPath);
+    const agent0AgentEnv = loadEnvFile(agent0AgentEnvPath);
     const todo0Env = loadEnvFile(todo0EnvPath);
 
-    const requiredAgent0 = [
+    // Combine agent0 .env files for validation
+    const agent0Env = { ...agent0AppEnv, ...agent0AgentEnv };
+
+    const requiredAgent0App = [
       'PORT',
       'SESSION_SECRET',
-      'MCP_SERVER_URL',
       'OKTA_DOMAIN',
       'OKTA_CLIENT_ID',
       'OKTA_CLIENT_SECRET',
       'OKTA_REDIRECT_URI',
+    ];
+
+    const requiredAgent0Agent = [
+      'MCP_SERVER_URL',
+      'OKTA_DOMAIN',
       'AI_AGENT_ID',
       'AI_AGENT_PRIVATE_KEY_FILE',
       'AI_AGENT_PRIVATE_KEY_KID',
       'AI_AGENT_TODO_MCP_SERVER_SCOPES_TO_REQUEST',
-      'ID_JAG_TOKEN_ENDPOINT',
-      'AGENT0_API_TOKEN_ENDPOINT',
-      'AGENT0_API_AUDIENCE',
-      'REST_API_TOKEN_ENDPOINT',
-      'REST_API_AUDIENCE',
       'MCP_AUTHORIZATION_SERVER',
       'MCP_AUTHORIZATION_SERVER_TOKEN_ENDPOINT',
-      'MCP_AUDIENCE',
     ];
 
     const requiredTodo0 = [
-      'PORT',
-      'OKTA_ISSUER',
-      'OKTA_CLIENT_ID',
-      'EXPECTED_AUDIENCE',
       'MCP_PORT',
       'MCP_OKTA_ISSUER',
       'MCP_EXPECTED_AUDIENCE',
     ];
 
     const missingVars: string[] = [];
-    requiredAgent0.forEach((key) => {
-      if (!agent0Env[key]) missingVars.push(`agent0: ${key}`);
+    requiredAgent0App.forEach((key) => {
+      if (!agent0AppEnv[key]) missingVars.push(`agent0 (.env.app): ${key}`);
+    });
+    requiredAgent0Agent.forEach((key) => {
+      if (!agent0AgentEnv[key]) missingVars.push(`agent0 (.env.agent): ${key}`);
     });
     requiredTodo0.forEach((key) => {
       if (!todo0Env[key]) missingVars.push(`todo0: ${key}`);
@@ -250,45 +225,6 @@ async function validateEnvFiles(): Promise<ValidationResult> {
   }
 }
 
-/**
- * Test: Validate audiences are distinct
- * Compares todo0's REST API and MCP audiences to ensure proper security boundaries
- */
-async function validateDistinctAudiences(todo0Env: Record<string, string>): Promise<ValidationResult> {
-  try {
-    const restApiAudience = todo0Env.EXPECTED_AUDIENCE;
-    const mcpAudience = todo0Env.MCP_EXPECTED_AUDIENCE;
-
-    if (!restApiAudience || !mcpAudience) {
-      return { passed: false, message: 'Audiences not configured in todo0 .env' };
-    }
-
-    if (restApiAudience === mcpAudience) {
-      return {
-        passed: false,
-        message: 'REST API and MCP audiences must be distinct for proper security boundaries',
-        details: {
-          restApiAudience,
-          mcpAudience,
-        },
-      };
-    }
-
-    return {
-      passed: true,
-      message: 'Audiences are properly separated',
-      details: {
-        restApiAudience,
-        mcpAudience,
-      },
-    };
-  } catch (error: any) {
-    return {
-      passed: false,
-      message: `Failed to validate audiences: ${error.message}`,
-    };
-  }
-}
 
 /**
  * Main validation function
@@ -297,11 +233,11 @@ async function validate() {
   console.log(chalk.bold.blue('\n🔍 Validating Okta Configuration\n'));
 
   // Load environment variables
-  let agent0Env: Record<string, string> = {};
+  let agent0AgentEnv: Record<string, string> = {};
   let todo0Env: Record<string, string> = {};
 
   try {
-    agent0Env = loadEnvFile('packages/agent0/.env');
+    agent0AgentEnv = loadEnvFile('packages/agent0/.env.agent');
     todo0Env = loadEnvFile('packages/todo0/.env');
   } catch (error: any) {
     console.error(chalk.red('❌ Failed to load environment files:'), error.message);
@@ -311,9 +247,7 @@ async function validate() {
 
   const tests: Array<{ name: string; fn: () => Promise<ValidationResult> }> = [
     { name: 'Environment Files', fn: () => validateEnvFiles() },
-    { name: 'Distinct Audiences', fn: () => validateDistinctAudiences(todo0Env) },
-    { name: 'Private Key', fn: () => validatePrivateKey(agent0Env) },
-    { name: 'REST API Auth Server', fn: () => validateRestApiAS(todo0Env) },
+    { name: 'Private Key', fn: () => validatePrivateKey(agent0AgentEnv) },
     { name: 'MCP Auth Server', fn: () => validateMcpAS(todo0Env) },
   ];
 

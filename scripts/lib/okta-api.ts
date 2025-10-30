@@ -262,6 +262,33 @@ export class OktaAPIClient {
   }
 
   /**
+   * Get trusted origin by name
+   */
+  async getTrustedOriginByName(name: string): Promise<any | null> {
+    const origins = await this.client.trustedOriginApi.listTrustedOrigins();
+    for await (const trustedOrigin of origins) {
+      if (trustedOrigin && trustedOrigin.name === name) {
+        return trustedOrigin;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Create a trusted origin if it doesn't already exist (idempotent)
+   */
+  async createTrustedOriginIfNotExists(name: string, origin: string): Promise<{ created: boolean; id: string | null }> {
+    const existing = await this.getTrustedOriginByName(name);
+    if (existing) {
+      return { created: false, id: existing.id };
+    }
+
+    await this.createTrustedOrigin(name, origin);
+    const created = await this.getTrustedOriginByName(name);
+    return { created: true, id: created?.id || null };
+  }
+
+  /**
    * Delete trusted origin by name
    */
   async deleteTrustedOriginByName(name: string): Promise<void> {

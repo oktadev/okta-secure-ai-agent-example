@@ -14,19 +14,15 @@ export interface BootstrapConfig {
   keyId: string;
 
   // Authorization Servers
-  agent0ApiAuthServerId: string;
-  agent0ApiAudience: string;
-  restApiAuthServerId: string;
-  restApiAudience: string;
   mcpAuthServerId: string;
   mcpAudience: string;
   mcpScopes: string[];
 }
 
 /**
- * Generate .env file for agent0 package
+ * Generate .env.app file for agent0 package (Resource Server)
  */
-export function generateAgent0Env(config: BootstrapConfig): string {
+export function generateAgent0AppEnv(config: BootstrapConfig): string {
   return `# ============================================================================
 # RESOURCE SERVER CONFIGURATION
 # ============================================================================
@@ -34,6 +30,21 @@ PORT=3000
 SESSION_SECRET=default-secret-change-in-production
 
 # ============================================================================
+# RESOURCE SERVER - OKTA OAUTH (HUMAN SSO)
+# ============================================================================
+OKTA_DOMAIN=${config.oktaDomain}
+OKTA_CLIENT_ID=${config.resourceServerClientId}
+OKTA_CLIENT_SECRET=${config.resourceServerClientSecret}
+OKTA_REDIRECT_URI=http://localhost:3000/callback
+
+`;
+}
+
+/**
+ * Generate .env.agent file for agent0 package (AI Agent / MCP Client)
+ */
+export function generateAgent0AgentEnv(config: BootstrapConfig): string {
+  return `# ============================================================================
 # AGENT - MCP CLIENT CONFIGURATION
 # ============================================================================
 MCP_SERVER_URL=http://localhost:5002/mcp
@@ -54,37 +65,18 @@ ANTHROPIC_MODEL=claude-3-5-sonnet-20241022
 # BEDROCK_MODEL_ID=us.anthropic.claude-3-5-sonnet-20241022-v2:0
 
 # ============================================================================
-# RESOURCE SERVER - OKTA OAUTH (HUMAN SSO)
-# ============================================================================
-OKTA_DOMAIN=${config.oktaDomain}
-OKTA_CLIENT_ID=${config.resourceServerClientId}
-OKTA_CLIENT_SECRET=${config.resourceServerClientSecret}
-OKTA_REDIRECT_URI=http://localhost:3000/callback
-
-# ============================================================================
 # AGENT - CROSS-APP ACCESS (ID-JAG TOKEN EXCHANGE)
 # ============================================================================
 # Agent Identity Configuration
+OKTA_DOMAIN=${config.oktaDomain}
 AI_AGENT_ID=${config.agentIdentityClientId}
 AI_AGENT_PRIVATE_KEY_FILE=${config.privateKeyFile}
 AI_AGENT_PRIVATE_KEY_KID=${config.keyId}
 AI_AGENT_TODO_MCP_SERVER_SCOPES_TO_REQUEST=${config.mcpScopes.join(' ')}
 
-# Token Endpoints
-ID_JAG_TOKEN_ENDPOINT=https://${config.oktaDomain}/oauth2/v1/token
-
-# Agent0 API Authorization Server (for agent0's own APIs)
-AGENT0_API_TOKEN_ENDPOINT=https://${config.oktaDomain}/oauth2/${config.agent0ApiAuthServerId}/v1/token
-AGENT0_API_AUDIENCE=${config.agent0ApiAudience}
-
-# REST API Authorization Server (for todo0 REST API)
-REST_API_TOKEN_ENDPOINT=https://${config.oktaDomain}/oauth2/${config.restApiAuthServerId}/v1/token
-REST_API_AUDIENCE=${config.restApiAudience}
-
 # MCP Authorization Server (for todo0 MCP server)
 MCP_AUTHORIZATION_SERVER=https://${config.oktaDomain}/oauth2/${config.mcpAuthServerId}
 MCP_AUTHORIZATION_SERVER_TOKEN_ENDPOINT=https://${config.oktaDomain}/oauth2/${config.mcpAuthServerId}/v1/token
-MCP_AUDIENCE=${config.mcpAudience}
 
 `;
 }
@@ -94,18 +86,6 @@ MCP_AUDIENCE=${config.mcpAudience}
  */
 export function generateTodo0Env(config: BootstrapConfig): string {
   return `# ============================================================================
-# REST API SERVER CONFIGURATION
-# ============================================================================
-PORT=5001
-
-# ============================================================================
-# REST API - OKTA JWT AUTHENTICATION
-# ============================================================================
-OKTA_ISSUER=https://${config.oktaDomain}/oauth2/${config.restApiAuthServerId}
-OKTA_CLIENT_ID=${config.agentIdentityClientId}
-EXPECTED_AUDIENCE=${config.restApiAudience}
-
-# ============================================================================
 # MCP SERVER CONFIGURATION
 # ============================================================================
 MCP_PORT=5002
@@ -163,27 +143,6 @@ Generated: ${new Date().toISOString()}
 - **Purpose**: Human SSO, ID-JAG token issuance
 - **Used by**: Resource Server OIDC, Agent Identity client_credentials
 
-### Agent0 API Authorization Server
-- **ID**: \`${config.agent0ApiAuthServerId}\`
-- **Issuer**: https://${config.oktaDomain}/oauth2/${config.agent0ApiAuthServerId}
-- **Audience**: \`${config.agent0ApiAudience}\`
-- **Purpose**: Protect agent0 resource server API endpoints (port 3000)
-- **Scopes**:
-  - \`read:profile\` - Read user profile
-  - \`write:profile\` - Update user profile
-
-### Todo0 REST API Authorization Server
-- **ID**: \`${config.restApiAuthServerId}\`
-- **Issuer**: https://${config.oktaDomain}/oauth2/${config.restApiAuthServerId}
-- **Audience**: \`${config.restApiAudience}\`
-- **Purpose**: Protect todo0 REST API endpoints (port 5001)
-- **Scopes**:
-  - \`create:todos\` - Create new todo items
-  - \`read:todos\` - Read todo items
-  - \`update:todos\` - Modify existing todos
-  - \`delete:todos\` - Remove todos
-  - \`admin:todos\` - Full administrative access
-
 ### Todo0 MCP Server Authorization Server
 - **ID**: \`${config.mcpAuthServerId}\`
 - **Issuer**: https://${config.oktaDomain}/oauth2/${config.mcpAuthServerId}
@@ -231,16 +190,7 @@ Agent Identity → Org AS (/oauth2/v1/token)
   Result: ID-JAG Token
 \`\`\`
 
-### Step 3: Exchange for REST API Token
-\`\`\`
-Agent Identity → REST API AS (/oauth2/${config.restApiAuthServerId}/v1/token)
-  Grant: urn:ietf:params:oauth:grant-type:jwt-bearer
-  Assertion: ID-JAG Token
-  Audience: ${config.restApiAudience}
-  Result: REST API Access Token (aud: ${config.restApiAudience})
-\`\`\`
-
-### Step 4: Exchange for MCP Token
+### Step 3: Exchange for MCP Token
 \`\`\`
 Agent Identity → MCP AS (/oauth2/${config.mcpAuthServerId}/v1/token)
   Grant: urn:ietf:params:oauth:grant-type:jwt-bearer
@@ -254,8 +204,6 @@ Agent Identity → MCP AS (/oauth2/${config.mcpAuthServerId}/v1/token)
 | Service | Port | Auth Server | Audience | Validates |
 |---------|------|-------------|----------|-----------|
 | **Agent0 Web UI** | 3000 | Org AS | - | Session-based |
-| **Agent0 APIs** | 3000 | Agent0 API AS | \`${config.agent0ApiAudience}\` | JWT (requireAuth) |
-| **Todo0 REST API** | 5001 | Todo0 REST API AS | \`${config.restApiAudience}\` | JWT (requireAuth) |
 | **Todo0 MCP Server** | 5002 | Todo0 MCP AS | \`${config.mcpAudience}\` | JWT (requireMcpAuth) |
 
 ## Files Generated
@@ -269,10 +217,9 @@ Agent Identity → MCP AS (/oauth2/${config.mcpAuthServerId}/v1/token)
 
 1. **Install dependencies**: \`pnpm install\`
 2. **Bootstrap database**: \`pnpm run bootstrap\`
-3. **Start REST API**: \`pnpm run start:todo0\`
-4. **Start MCP Server**: \`pnpm run start:mcp\`
-5. **Start Agent**: \`pnpm run start:agent0\`
-6. **Validate config** (optional): \`pnpm run validate:okta\`
+3. **Start MCP Server**: \`pnpm run start:mcp\`
+4. **Start Agent**: \`pnpm run start:agent0\`
+5. **Validate config** (optional): \`pnpm run validate:okta\`
 
 ## Important Notes
 

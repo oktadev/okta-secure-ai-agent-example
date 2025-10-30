@@ -14,8 +14,6 @@ export interface AgentConnectionInfo {
  */
 export interface RollbackState {
   oktaDomain: string;
-  agent0ApiAuthServerIds: string[];
-  restApiAuthServerIds: string[];
   mcpAuthServerIds: string[];
   agent0AppIds: string[];
   todo0AppIds: string[];
@@ -24,10 +22,6 @@ export interface RollbackState {
   agentIdentityIds: string[];
   agentConnections: AgentConnectionInfo[];
   agentOwnerSetupMethod?: 'standard' | 'developer';
-  agent0ApiPolicyIds: string[];
-  agent0ApiPolicyRuleIds: string[];
-  restApiPolicyIds: string[];
-  restApiPolicyRuleIds: string[];
   mcpPolicyIds: string[];
   mcpPolicyRuleIds: string[];
   trustedOriginNames: string[];
@@ -41,8 +35,6 @@ const STATE_FILE_PATH = '.okta-bootstrap-state.json';
 export function createEmptyState(oktaDomain: string): RollbackState {
   return {
     oktaDomain,
-    agent0ApiAuthServerIds: [],
-    restApiAuthServerIds: [],
     mcpAuthServerIds: [],
     agent0AppIds: [],
     todo0AppIds: [],
@@ -51,10 +43,6 @@ export function createEmptyState(oktaDomain: string): RollbackState {
     agentIdentityIds: [],
     agentConnections: [],
     agentOwnerSetupMethod: undefined,
-    agent0ApiPolicyIds: [],
-    agent0ApiPolicyRuleIds: [],
-    restApiPolicyIds: [],
-    restApiPolicyRuleIds: [],
     mcpPolicyIds: [],
     mcpPolicyRuleIds: [],
     trustedOriginNames: [],
@@ -76,8 +64,6 @@ export function loadRollbackState(oktaDomain: string): RollbackState {
     // Ensure all array fields exist (for backward compatibility)
     return {
       oktaDomain: state.oktaDomain || oktaDomain,
-      agent0ApiAuthServerIds: state.agent0ApiAuthServerIds || [],
-      restApiAuthServerIds: state.restApiAuthServerIds || [],
       mcpAuthServerIds: state.mcpAuthServerIds || [],
       agent0AppIds: state.agent0AppIds || [],
       todo0AppIds: state.todo0AppIds || [],
@@ -86,10 +72,6 @@ export function loadRollbackState(oktaDomain: string): RollbackState {
       agentIdentityIds: state.agentIdentityIds || [],
       agentConnections: state.agentConnections || [],
       agentOwnerSetupMethod: state.agentOwnerSetupMethod,
-      agent0ApiPolicyIds: state.agent0ApiPolicyIds || [],
-      agent0ApiPolicyRuleIds: state.agent0ApiPolicyRuleIds || [],
-      restApiPolicyIds: state.restApiPolicyIds || [],
-      restApiPolicyRuleIds: state.restApiPolicyRuleIds || [],
       mcpPolicyIds: state.mcpPolicyIds || [],
       mcpPolicyRuleIds: state.mcpPolicyRuleIds || [],
       trustedOriginNames: state.trustedOriginNames || [],
@@ -111,8 +93,6 @@ export function updateRollbackState(
   // Merge arrays (append new items, avoid duplicates)
   const mergedState: RollbackState = {
     oktaDomain: updates.oktaDomain || currentState.oktaDomain,
-    agent0ApiAuthServerIds: mergeArrays(currentState.agent0ApiAuthServerIds, updates.agent0ApiAuthServerIds),
-    restApiAuthServerIds: mergeArrays(currentState.restApiAuthServerIds, updates.restApiAuthServerIds),
     mcpAuthServerIds: mergeArrays(currentState.mcpAuthServerIds, updates.mcpAuthServerIds),
     agent0AppIds: mergeArrays(currentState.agent0AppIds, updates.agent0AppIds),
     todo0AppIds: mergeArrays(currentState.todo0AppIds, updates.todo0AppIds),
@@ -121,10 +101,6 @@ export function updateRollbackState(
     agentIdentityIds: mergeArrays(currentState.agentIdentityIds, updates.agentIdentityIds),
     agentConnections: mergeConnectionArrays(currentState.agentConnections, updates.agentConnections),
     agentOwnerSetupMethod: updates.agentOwnerSetupMethod !== undefined ? updates.agentOwnerSetupMethod : currentState.agentOwnerSetupMethod,
-    agent0ApiPolicyIds: mergeArrays(currentState.agent0ApiPolicyIds, updates.agent0ApiPolicyIds),
-    agent0ApiPolicyRuleIds: mergeArrays(currentState.agent0ApiPolicyRuleIds, updates.agent0ApiPolicyRuleIds),
-    restApiPolicyIds: mergeArrays(currentState.restApiPolicyIds, updates.restApiPolicyIds),
-    restApiPolicyRuleIds: mergeArrays(currentState.restApiPolicyRuleIds, updates.restApiPolicyRuleIds),
     mcpPolicyIds: mergeArrays(currentState.mcpPolicyIds, updates.mcpPolicyIds),
     mcpPolicyRuleIds: mergeArrays(currentState.mcpPolicyRuleIds, updates.mcpPolicyRuleIds),
     trustedOriginNames: mergeArrays(currentState.trustedOriginNames, updates.trustedOriginNames),

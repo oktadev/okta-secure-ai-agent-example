@@ -4,9 +4,10 @@ import chalk from 'chalk';
 import ora from 'ora';
 import * as path from 'path';
 import { OktaAPIClient } from './lib/okta-api.js';
-import { generateRSAKeyPair, savePrivateKey, privateKeyExists } from './lib/key-generator.js';
+import { generateRSAKeyPair, savePrivateKey } from './lib/key-generator.js';
 import {
-  generateAgent0Env,
+  generateAgent0AppEnv,
+  generateAgent0AgentEnv,
   generateTodo0Env,
   writeEnvFile,
   writeConfigReport,
@@ -15,7 +16,6 @@ import {
 import {
   loadRollbackState,
   updateRollbackState,
-  RollbackState,
 } from './lib/state-manager.js';
 import {
   AgentIdentityAPIClient,
@@ -27,8 +27,6 @@ import type { OpenIdConnectApplication } from '@okta/okta-sdk-nodejs';
 interface PromptAnswers {
   oktaDomain: string;
   oktaApiToken: string;
-  agent0ApiAudience: string;
-  restApiAudience: string;
   mcpAudience: string;
   ownerSetupMethod: 'standard' | 'developer';
   confirm: boolean;
@@ -41,7 +39,7 @@ async function bootstrap() {
   console.log(chalk.bold.blue('\n🚀 Okta Tenant Bootstrap for Secure AI Agent Example\n'));
   console.log('This script will configure your Okta tenant with:');
   console.log('  • Two OIDC applications (Agent0 + Todo0)');
-  console.log('  • Two custom authorization servers (Todo0 REST Server, Todo0 MCP Server)');
+  console.log('  • One custom authorization server (Todo0 MCP Server)');
   console.log('     • Custom scopes and access policies');
   console.log('  • Agent0 agent identity');
   console.log('     • RSA key pair for agent authentication');
@@ -63,18 +61,6 @@ async function bootstrap() {
       name: 'oktaApiToken',
       message: 'Enter your Okta API token:',
       validate: (value) => (value ? true : 'API token is required'),
-    },
-    {
-      type: 'text',
-      name: 'agent0ApiAudience',
-      message: 'Agent0 API audience identifier:',
-      initial: 'api://agent0',
-    },
-    {
-      type: 'text',
-      name: 'restApiAudience',
-      message: 'Todo0 REST API audience identifier:',
-      initial: 'api://todo0',
     },
     {
       type: 'text',
@@ -122,67 +108,14 @@ async function bootstrap() {
 
   const bootstrapConfig: Partial<BootstrapConfig> = {
     oktaDomain: config.oktaDomain,
-    agent0ApiAudience: config.agent0ApiAudience,
-    restApiAudience: config.restApiAudience,
     mcpAudience: config.mcpAudience,
     privateKeyFile: 'agent0-private-key.pem',
   };
 
   try {
-    // Step 1: Create Agent0 API Authorization Server
-    console.log(chalk.bold('\n📋 Step 1: Creating Agent0 API Authorization Server'));
+    // Step 1: Create MCP Authorization Server
+    console.log(chalk.bold('\n📋 Step 1: Creating MCP Authorization Server'));
     let spinner = ora('Creating authorization server...').start();
-
-    const agent0ApiAS = await oktaClient.createAuthorizationServer({
-      name: 'agent0-api-as',
-      description: 'Authorization server for agent0 API endpoints',
-      audiences: [config.agent0ApiAudience],
-    });
-
-    bootstrapConfig.agent0ApiAuthServerId = agent0ApiAS.id!;
-    rollbackState = updateRollbackState(rollbackState, {
-      agent0ApiAuthServerIds: [agent0ApiAS.id!],
-    });
-    spinner.succeed(`Agent0 API AS created: ${chalk.cyan(agent0ApiAS.id)}`);
-
-    // Add Agent0 API scopes (customize as needed for agent0's APIs)
-    spinner = ora('Adding Agent0 API scopes...').start();
-    await oktaClient.addScopes(agent0ApiAS.id!, [
-      { name: 'read:profile', description: 'Read user profile' },
-      { name: 'write:profile', description: 'Update user profile' },
-    ]);
-    spinner.succeed('Agent0 API scopes added');
-
-    // Step 2: Create Todo0 REST API Authorization Server
-    console.log(chalk.bold('\n📋 Step 2: Creating Todo0 REST API Authorization Server'));
-    spinner = ora('Creating authorization server...').start();
-
-    const restApiAS = await oktaClient.createAuthorizationServer({
-      name: 'todo0-rest-api-as',
-      description: 'Authorization server for todo0 REST API endpoints',
-      audiences: [config.restApiAudience],
-    });
-
-    bootstrapConfig.restApiAuthServerId = restApiAS.id!;
-    rollbackState = updateRollbackState(rollbackState, {
-      restApiAuthServerIds: [restApiAS.id!],
-    });
-    spinner.succeed(`Todo0 REST API AS created: ${chalk.cyan(restApiAS.id)}`);
-
-    // Add REST API scopes
-    spinner = ora('Adding Todo0 REST API scopes...').start();
-    await oktaClient.addScopes(restApiAS.id!, [
-      { name: 'create:todos', description: 'Create new todo items' },
-      { name: 'read:todos', description: 'Read todo items' },
-      { name: 'update:todos', description: 'Modify existing todos' },
-      { name: 'delete:todos', description: 'Remove todos' },
-      { name: 'admin:todos', description: 'Full administrative access' },
-    ]);
-    spinner.succeed('Todo0 REST API scopes added');
-
-    // Step 3: Create MCP Authorization Server
-    console.log(chalk.bold('\n📋 Step 3: Creating MCP Authorization Server'));
-    spinner = ora('Creating authorization server...').start();
 
     const mcpAS = await oktaClient.createAuthorizationServer({
       name: 'todo0-mcp-server',
@@ -205,8 +138,8 @@ async function bootstrap() {
     ]);
     spinner.succeed('MCP scopes added');
 
-    // Step 4: Create agent0 OIDC Application
-    console.log(chalk.bold('\n📋 Step 4: Creating agent0 OIDC Application'));
+    // Step 2: Create agent0 OIDC Application
+    console.log(chalk.bold('\n📋 Step 2: Creating agent0 OIDC Application'));
     spinner = ora('Creating agent0 OIDC client...').start();
 
     const agent0App = await oktaClient.createApplication({
@@ -240,8 +173,8 @@ async function bootstrap() {
     });
     spinner.succeed(`agent0 OIDC app created: ${chalk.cyan(agent0AppId)}`);
 
-    // Step 5: Create todo0 OIDC Application
-    console.log(chalk.bold('\n📋 Step 5: Creating todo0 OIDC Application'));
+    // Step 3: Create todo0 OIDC Application
+    console.log(chalk.bold('\n📋 Step 3: Creating todo0 OIDC Application'));
     spinner = ora('Creating todo0 OIDC client...').start();
 
     const todo0App = await oktaClient.createApplication({
@@ -273,8 +206,8 @@ async function bootstrap() {
     });
     spinner.succeed(`todo0 OIDC app created: ${chalk.cyan(todo0AppId)}`);
 
-    // Step 5.5: Assign Current User to Applications
-    console.log(chalk.bold('\n📋 Step 5.5: Assigning User to Applications'));
+    // Step 4: Assign Current User to Applications
+    console.log(chalk.bold('\n📋 Step 4: Assigning User to Applications'));
     spinner = ora('Getting current user...').start();
 
     const currentUser = await agentClient.getCurrentUser();
@@ -294,8 +227,8 @@ async function bootstrap() {
     });
     spinner.succeed('User assigned to todo0 application');
 
-    // Step 6: Generate RSA Key Pair
-    console.log(chalk.bold('\n📋 Step 6: Generating RSA Key Pair for Agent'));
+    // Step 5: Generate RSA Key Pair
+    console.log(chalk.bold('\n📋 Step 5: Generating RSA Key Pair for Agent'));
     spinner = ora('Generating 2048-bit RSA key pair...').start();
 
     const keyPair = await generateRSAKeyPair();
@@ -303,8 +236,8 @@ async function bootstrap() {
     await savePrivateKey(keyPair.privateKeyPem, privateKeyPath);
     spinner.succeed('RSA key pair generated');
 
-    // Step 7: Create Agent Identity
-    console.log(chalk.bold('\n📋 Step 7: Creating Agent Identity'));
+    // Step 6: Create Agent Identity
+    console.log(chalk.bold('\n📋 Step 6: Creating Agent Identity'));
     spinner = ora('Registering agent identity...').start();
 
     let agentIdentityId: string;
@@ -342,8 +275,8 @@ async function bootstrap() {
 
     bootstrapConfig.agentIdentityClientId = agentClientId;
 
-    // Step 7.5: Set Agent Owners
-    console.log(chalk.bold('\n📋 Step 7.5: Setting Agent Owners'));
+    // Step 7: Set Agent Owners
+    console.log(chalk.bold('\n📋 Step 7: Setting Agent Owners'));
     spinner = ora('Setting agent owners...').start();
 
     try {
@@ -453,60 +386,6 @@ async function bootstrap() {
     // Step 11: Create Access Policies
     console.log(chalk.bold('\n📋 Step 11: Creating Access Policies'));
 
-    // Agent0 API AS Policy (for agent0 OIDC app)
-    spinner = ora('Creating Agent0 API policy...').start();
-    const agent0ClientId = agent0App.credentials.oauthClient!.client_id!;
-    const agent0ApiPolicy = await oktaClient.createPolicy(agent0ApiAS.id!, {
-      name: 'Default Agent0 API Policy',
-      description: 'Default access policy for Agent0 API',
-      priority: 1,
-      clientIds: [agent0ClientId],
-    });
-    rollbackState = updateRollbackState(rollbackState, {
-      agent0ApiPolicyIds: [agent0ApiPolicy.id!],
-    });
-    spinner.succeed('Agent0 API policy created');
-
-    spinner = ora('Creating Agent0 API policy rule...').start();
-    const agent0ApiPolicyRule = await oktaClient.createPolicyRule(agent0ApiAS.id!, agent0ApiPolicy.id!, {
-      name: 'Allow Agent0 API Access',
-      priority: 1,
-      grantTypes: ['urn:ietf:params:oauth:grant-type:jwt-bearer'],
-      scopes: ['read:profile', 'write:profile'],
-      accessTokenLifetimeMinutes: 60,
-    });
-    rollbackState = updateRollbackState(rollbackState, {
-      agent0ApiPolicyRuleIds: [agent0ApiPolicyRule.id!],
-    });
-    spinner.succeed('Agent0 API policy rule created');
-
-    // REST API AS Policy (for todo0 OIDC app)
-    spinner = ora('Creating REST API policy...').start();
-    const todo0ClientId = todo0App.credentials.oauthClient!.client_id!;
-    const restApiPolicy = await oktaClient.createPolicy(restApiAS.id!, {
-      name: 'Default REST API Policy',
-      description: 'Default access policy for REST API',
-      priority: 1,
-      clientIds: [todo0ClientId],
-    });
-    rollbackState = updateRollbackState(rollbackState, {
-      restApiPolicyIds: [restApiPolicy.id!],
-    });
-    spinner.succeed('REST API policy created');
-
-    spinner = ora('Creating REST API policy rule...').start();
-    const restApiPolicyRule = await oktaClient.createPolicyRule(restApiAS.id!, restApiPolicy.id!, {
-      name: 'Allow REST API Access',
-      priority: 1,
-      grantTypes: ['urn:ietf:params:oauth:grant-type:jwt-bearer'],
-      scopes: ['create:todos', 'read:todos', 'update:todos', 'delete:todos'],
-      accessTokenLifetimeMinutes: 60,
-    });
-    rollbackState = updateRollbackState(rollbackState, {
-      restApiPolicyRuleIds: [restApiPolicyRule.id!],
-    });
-    spinner.succeed('REST API policy rule created');
-
     // MCP AS Policy (for agent identity)
     spinner = ora('Creating MCP policy...').start();
     const mcpPolicy = await oktaClient.createPolicy(mcpAS.id!, {
@@ -545,21 +424,41 @@ async function bootstrap() {
     console.log(chalk.bold('\n📋 Step 12: Creating Trusted Origins'));
     spinner = ora('Adding trusted origins...').start();
 
-    await oktaClient.createTrustedOrigin('agent0-ui', 'http://localhost:3000');
-    await oktaClient.createTrustedOrigin('todo0-rest-api', 'http://localhost:5001');
-    await oktaClient.createTrustedOrigin('todo0-mcp-server', 'http://localhost:5002');
+    const origins = [
+      { name: 'agent0-ui', url: 'http://localhost:3000' },
+      { name: 'todo0-mcp-server', url: 'http://localhost:5002' },
+    ];
 
-    rollbackState = updateRollbackState(rollbackState, {
-      trustedOriginNames: ['agent0-ui', 'todo0-rest-api', 'todo0-mcp-server'],
-    });
-    spinner.succeed('Trusted origins added');
+    const createdOrigins: string[] = [];
+    for (const { name, url } of origins) {
+      const result = await oktaClient.createTrustedOriginIfNotExists(name, url);
+      if (result.created) {
+        createdOrigins.push(name);
+      }
+    }
+
+    // Only add to rollback state the origins we actually created
+    if (createdOrigins.length > 0) {
+      rollbackState = updateRollbackState(rollbackState, {
+        trustedOriginNames: createdOrigins,
+      });
+    }
+
+    if (origins.length === createdOrigins.length) {
+      spinner.succeed('Trusted origins added');
+    } else {
+      spinner.succeed(`Trusted origins configured (${createdOrigins.length} created, ${origins.length - createdOrigins.length} already existed)`);
+    }
 
     // Step 13: Generate Configuration Files
     console.log(chalk.bold('\n📋 Step 13: Generating Configuration Files'));
     spinner = ora('Writing .env files...').start();
 
-    const agent0Env = generateAgent0Env(bootstrapConfig as BootstrapConfig);
-    writeEnvFile('packages/agent0/.env', agent0Env);
+    const agent0AppEnv = generateAgent0AppEnv(bootstrapConfig as BootstrapConfig);
+    writeEnvFile('packages/agent0/.env.app', agent0AppEnv);
+
+    const agent0AgentEnv = generateAgent0AgentEnv(bootstrapConfig as BootstrapConfig);
+    writeEnvFile('packages/agent0/.env.agent', agent0AgentEnv);
 
     const todo0Env = generateTodo0Env(bootstrapConfig as BootstrapConfig);
     writeEnvFile('packages/todo0/.env', todo0Env);

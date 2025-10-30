@@ -3,7 +3,6 @@ import prompts from 'prompts';
 import chalk from 'chalk';
 import ora from 'ora';
 import * as fs from 'fs';
-import * as path from 'path';
 import { OktaAPIClient } from './lib/okta-api.js';
 import { AgentIdentityAPIClient } from './lib/agent-identity-api.js';
 
@@ -14,8 +13,6 @@ interface AgentConnectionInfo {
 
 interface RollbackState {
   oktaDomain: string;
-  agent0ApiAuthServerIds: string[];
-  restApiAuthServerIds: string[];
   mcpAuthServerIds: string[];
   agent0AppIds: string[];
   todo0AppIds: string[];
@@ -24,10 +21,6 @@ interface RollbackState {
   agentIdentityIds: string[];
   agentConnections: AgentConnectionInfo[];
   agentOwnerSetupMethod?: 'standard' | 'developer';
-  agent0ApiPolicyIds: string[];
-  agent0ApiPolicyRuleIds: string[];
-  restApiPolicyIds: string[];
-  restApiPolicyRuleIds: string[];
   mcpPolicyIds: string[];
   mcpPolicyRuleIds: string[];
   trustedOriginNames: string[];
@@ -79,12 +72,6 @@ async function rollback() {
   }
 
   console.log('Resources to be deleted:');
-  if (state.agent0ApiAuthServerIds?.length > 0) {
-    console.log(chalk.gray(`  • Agent0 API Authorization Servers (${state.agent0ApiAuthServerIds.length})`));
-  }
-  if (state.restApiAuthServerIds?.length > 0) {
-    console.log(chalk.gray(`  • REST API Authorization Servers (${state.restApiAuthServerIds.length})`));
-  }
   if (state.mcpAuthServerIds?.length > 0) {
     console.log(chalk.gray(`  • MCP Authorization Servers (${state.mcpAuthServerIds.length})`));
   }
@@ -99,12 +86,6 @@ async function rollback() {
   }
   if (state.todo0AppUserIds?.length > 0) {
     console.log(chalk.gray(`  • todo0 Application User Assignments (${state.todo0AppUserIds.length})`));
-  }
-  if (state.agent0ApiPolicyIds?.length > 0) {
-    console.log(chalk.gray(`  • Agent0 API Policies (${state.agent0ApiPolicyIds.length})`));
-  }
-  if (state.restApiPolicyIds?.length > 0) {
-    console.log(chalk.gray(`  • REST API Policies (${state.restApiPolicyIds.length})`));
   }
   if (state.mcpPolicyIds?.length > 0) {
     console.log(chalk.gray(`  • MCP Policies (${state.mcpPolicyIds.length})`));
@@ -161,47 +142,6 @@ async function rollback() {
     // Delete in reverse dependency order: policies/rules → apps → auth servers → origins
 
     // Step 1: Delete Policy Rules (must be deleted before policies)
-    if (state.agent0ApiPolicyRuleIds && state.agent0ApiPolicyRuleIds.length > 0) {
-      for (const ruleId of state.agent0ApiPolicyRuleIds) {
-        const spinner = ora(`Deleting Agent0 API policy rule ${ruleId}...`).start();
-        try {
-          const authServerId = state.agent0ApiAuthServerIds?.[0];
-          const policyId = state.agent0ApiPolicyIds?.[0];
-          if (authServerId && policyId) {
-            await oktaClient.deletePolicyRule(authServerId, policyId, ruleId);
-            spinner.succeed(`Agent0 API policy rule deleted`);
-            deletedCount++;
-          } else {
-            spinner.warn('Skipped (missing auth server or policy ID)');
-          }
-        } catch (error: any) {
-          spinner.fail(`Failed: ${error.message}`);
-          errorCount++;
-        }
-      }
-    }
-
-    if (state.restApiPolicyRuleIds && state.restApiPolicyRuleIds.length > 0) {
-      for (const ruleId of state.restApiPolicyRuleIds) {
-        const spinner = ora(`Deleting REST API policy rule ${ruleId}...`).start();
-        try {
-          // We need both authServerId and policyId - extract from state
-          const authServerId = state.restApiAuthServerIds?.[0];
-          const policyId = state.restApiPolicyIds?.[0];
-          if (authServerId && policyId) {
-            await oktaClient.deletePolicyRule(authServerId, policyId, ruleId);
-            spinner.succeed(`REST API policy rule deleted`);
-            deletedCount++;
-          } else {
-            spinner.warn('Skipped (missing auth server or policy ID)');
-          }
-        } catch (error: any) {
-          spinner.fail(`Failed: ${error.message}`);
-          errorCount++;
-        }
-      }
-    }
-
     if (state.mcpPolicyRuleIds && state.mcpPolicyRuleIds.length > 0) {
       for (const ruleId of state.mcpPolicyRuleIds) {
         const spinner = ora(`Deleting MCP policy rule ${ruleId}...`).start();
@@ -223,44 +163,6 @@ async function rollback() {
     }
 
     // Step 2: Delete Policies (must be deleted before auth servers)
-    if (state.agent0ApiPolicyIds && state.agent0ApiPolicyIds.length > 0) {
-      for (const policyId of state.agent0ApiPolicyIds) {
-        const spinner = ora(`Deleting Agent0 API policy ${policyId}...`).start();
-        try {
-          const authServerId = state.agent0ApiAuthServerIds?.[0];
-          if (authServerId) {
-            await oktaClient.deletePolicy(authServerId, policyId);
-            spinner.succeed(`Agent0 API policy deleted`);
-            deletedCount++;
-          } else {
-            spinner.warn('Skipped (missing auth server ID)');
-          }
-        } catch (error: any) {
-          spinner.fail(`Failed: ${error.message}`);
-          errorCount++;
-        }
-      }
-    }
-
-    if (state.restApiPolicyIds && state.restApiPolicyIds.length > 0) {
-      for (const policyId of state.restApiPolicyIds) {
-        const spinner = ora(`Deleting REST API policy ${policyId}...`).start();
-        try {
-          const authServerId = state.restApiAuthServerIds?.[0];
-          if (authServerId) {
-            await oktaClient.deletePolicy(authServerId, policyId);
-            spinner.succeed(`REST API policy deleted`);
-            deletedCount++;
-          } else {
-            spinner.warn('Skipped (missing auth server ID)');
-          }
-        } catch (error: any) {
-          spinner.fail(`Failed: ${error.message}`);
-          errorCount++;
-        }
-      }
-    }
-
     if (state.mcpPolicyIds && state.mcpPolicyIds.length > 0) {
       for (const policyId of state.mcpPolicyIds) {
         const spinner = ora(`Deleting MCP policy ${policyId}...`).start();
@@ -404,34 +306,6 @@ async function rollback() {
     }
 
     // Step 6: Delete Authorization Servers (scopes are auto-deleted with auth server)
-    if (state.agent0ApiAuthServerIds && state.agent0ApiAuthServerIds.length > 0) {
-      for (const authServerId of state.agent0ApiAuthServerIds) {
-        const spinner = ora(`Deleting Agent0 API Authorization Server ${authServerId}...`).start();
-        try {
-          await oktaClient.deleteAuthorizationServer(authServerId);
-          spinner.succeed(`Agent0 API Authorization Server deleted`);
-          deletedCount++;
-        } catch (error: any) {
-          spinner.fail(`Failed: ${error.message}`);
-          errorCount++;
-        }
-      }
-    }
-
-    if (state.restApiAuthServerIds && state.restApiAuthServerIds.length > 0) {
-      for (const authServerId of state.restApiAuthServerIds) {
-        const spinner = ora(`Deleting REST API Authorization Server ${authServerId}...`).start();
-        try {
-          await oktaClient.deleteAuthorizationServer(authServerId);
-          spinner.succeed(`REST API Authorization Server deleted`);
-          deletedCount++;
-        } catch (error: any) {
-          spinner.fail(`Failed: ${error.message}`);
-          errorCount++;
-        }
-      }
-    }
-
     if (state.mcpAuthServerIds && state.mcpAuthServerIds.length > 0) {
       for (const authServerId of state.mcpAuthServerIds) {
         const spinner = ora(`Deleting MCP Authorization Server ${authServerId}...`).start();
