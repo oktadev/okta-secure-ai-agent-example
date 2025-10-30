@@ -1,12 +1,17 @@
 // todo-manager.ts
 import { z } from 'zod';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
+import { randomUUID } from 'node:crypto';
 import express from 'express';
 import * as dotenv from 'dotenv';
 import * as path from 'path';
+import { mcpAuthMetadataRouter, getOAuthProtectedResourceMetadataUrl } from '@modelcontextprotocol/sdk/server/auth/router.js';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol';
+import { isInitializeRequest, ServerNotification, ServerRequest } from '@modelcontextprotocol/sdk/types.js';
+
 import { todoService } from './services/todo-service';
-import { requireMcpAuth, McpAuthClaims } from './middleware/requireMcpAuth';
+import { requireMcpAuth, McpAuthClaims, verifyAccessTokenWithScopes} from './middleware/requireMcpAuth';
 
 // Load environment variables
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
@@ -34,19 +39,64 @@ const deleteTodoParams: z.ZodRawShape = {
   id: z.number().describe('The ID of the todo to delete'),
 };
 
+const makeProtectedTool = (scopes: string[], cb: (params: any, extra: RequestHandlerExtra<ServerRequest, ServerNotification>) => Promise<any>): ((args: any, extra: RequestHandlerExtra<ServerRequest, ServerNotification>) => Promise<any>) => {
+    return async (params: any, extra: RequestHandlerExtra<ServerRequest, ServerNotification>) => {
+      if (!extra.requestInfo?.headers.authorization) {
+        throw new Error('Missing Authorization header in tool callback');
+      }
+      if (Array.isArray(extra.requestInfo?.headers.authorization)) {
+        throw new Error('Unexpected Authorization header in tool callback');
+      }
+      const authorizationHeader = extra.requestInfo?.headers.authorization;
+
+      console.log('🔍 Verifying access token for tool execution...');
+      const isValidToken = await verifyAccessTokenWithScopes(authorizationHeader, scopes);
+      if (!isValidToken) {
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              error: 'Unauthorized',
+              message: 'Invalid or expired token'
+            })
+          }],
+          isError: true,
+        };
+      }
+
+      try {
+        return await cb(params, extra);
+      } catch (error) {
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              error: 'Internal Server Error',
+              message: error instanceof Error ? error.message : 'Unknown error'
+            })
+          }],
+          isError: true,
+        };
+      }
+      
+    }
+}
+
 // ============================================================================
 // Tool 1: Create Todo
 // ============================================================================
-// Note: JWT authentication is enforced at the transport layer (SSE/messages endpoints).
+// Note: JWT authentication is enforced at the transport layer (/mcp endpoint).
 // All connections to this server are authenticated before tool execution.
-// Future enhancement: Pass user claims to tools for user-specific operations.
-
+// Tools are further authorized via scope checks in makeProtectedTool. 
 server.tool(
   'create-todo',
   'Create a new todo item.',
   createTodoParams,
-  async ({ title }) => {
-    try {
+  makeProtectedTool(
+    [
+      'mcp:tools:manage'
+    ],
+    async ({ title }) => {
       const todo = await todoService.createTodo(title);
 
       return {
@@ -59,19 +109,8 @@ server.tool(
           })
         }],
       };
-    } catch (error) {
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            error: 'Internal Server Error',
-            message: error instanceof Error ? error.message : 'Unknown error'
-          })
-        }],
-        isError: true,
-      };
     }
-  }
+  )
 );
 
 // ============================================================================
@@ -82,8 +121,11 @@ server.tool(
   'get-todos',
   'List all todos.',
   emptyParams,
-  async () => {
-    try {
+  makeProtectedTool(
+    [
+      'mcp:tools:read'
+    ],
+    async () => {
       const todos = await todoService.getAllTodos();
 
       return {
@@ -97,19 +139,8 @@ server.tool(
           })
         }],
       };
-    } catch (error) {
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            error: 'Internal Server Error',
-            message: error instanceof Error ? error.message : 'Unknown error'
-          })
-        }],
-        isError: true,
-      };
     }
-  }
+  )
 );
 
 // ============================================================================
@@ -120,8 +151,11 @@ server.tool(
   'toggle-todo',
   'Toggle the completed status of a todo.',
   toggleTodoParams,
-  async ({ id }) => {
-    try {
+  makeProtectedTool(
+    [
+      'mcp:tools:manage'
+    ],
+    async ({ id }) => {
       const todo = await todoService.toggleTodo(id);
 
       if (!todo) {
@@ -147,19 +181,8 @@ server.tool(
           })
         }],
       };
-    } catch (error) {
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            error: 'Internal Server Error',
-            message: error instanceof Error ? error.message : 'Unknown error'
-          })
-        }],
-        isError: true,
-      };
     }
-  }
+  )
 );
 
 // ============================================================================
@@ -170,8 +193,11 @@ server.tool(
   'delete-todo',
   'Delete a todo by ID.',
   deleteTodoParams,
-  async ({ id }) => {
-    try {
+  makeProtectedTool(
+    [
+      'mcp:tools:manage'
+    ],
+    async ({ id }) => {
       const deleted = await todoService.deleteTodo(id);
 
       if (!deleted) {
@@ -196,101 +222,207 @@ server.tool(
           })
         }],
       };
-    } catch (error) {
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            error: 'Internal Server Error',
-            message: error instanceof Error ? error.message : 'Unknown error'
-          })
-        }],
-        isError: true,
-      };
     }
-  }
+  )
 );
 
 // ============================================================================
-// Express Server Setup
+// Express Server Setup with StreamableHTTP
 // ============================================================================
 
 async function bootstrap(): Promise<void> {
-  const MCP_PORT = process.env.MCP_PORT || 3001;
+  const MCP_PORT = process.env.MCP_PORT || 5002;
   const app = express();
-  const transports = new Map<string, SSEServerTransport>();
-  const sessionAuth = new Map<string, McpAuthClaims>();
+
+  // Map to store transports by session ID
+  const transports: Record<string, StreamableHTTPServerTransport> = {};
+  // Map to store auth claims by session ID
+  const sessionAuth: Record<string, McpAuthClaims> = {};
 
   app.use(express.json());
 
-  // Secure SSE endpoint with JWT verification
-  app.get('/sse', requireMcpAuth, async (req, res) => {
+  const mcpAuthMetadata = await fetch(`${process.env.MCP_OKTA_ISSUER}/.well-known/oauth-authorization-server`).then(res => res.json());
+
+  console.log('MCP Auth Metadata:', mcpAuthMetadata);
+  
+  /**
+   * MCP Protected Resource Metadata Endpoint
+   */
+  app.use(mcpAuthMetadataRouter({
+    oauthMetadata: mcpAuthMetadata,
+    resourceServerUrl: new URL(`http://localhost:${MCP_PORT}/mcp`)
+  }));
+
+  // MCP POST endpoint - handles initialization and subsequent requests
+  app.post('/mcp', requireMcpAuth, async (req, res) => {
     const mcpUser = (req as any).mcpUser as McpAuthClaims;
-    console.log('New SSE connection established');
-    console.log('  Authenticated user:', mcpUser.sub);
-    console.log('  Client ID:', mcpUser.cid);
+    const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
-    const transport = new SSEServerTransport('/messages', res);
-    transports.set(transport.sessionId, transport);
-    sessionAuth.set(transport.sessionId, mcpUser);
+    if (sessionId) {
+      console.log(`Received MCP request for session: ${sessionId}`);
+    }
 
-    res.on('close', () => {
-      console.log('SSE connection closed:', transport.sessionId);
-      transports.delete(transport.sessionId);
-      sessionAuth.delete(transport.sessionId);
-    });
+    try {
+      let transport: StreamableHTTPServerTransport;
 
-    await server.connect(transport);
+      if (sessionId && transports[sessionId]) {
+        // Reuse existing transport for this session
+        transport = transports[sessionId];
+
+        // Verify the session belongs to this authenticated user
+        const sessionUser = sessionAuth[sessionId];
+        if (!sessionUser || sessionUser.sub !== mcpUser.sub) {
+          console.error('Session authentication mismatch');
+          return res.status(403).json({
+            jsonrpc: '2.0',
+            error: {
+              code: -32000,
+              message: 'Forbidden: Session does not belong to authenticated user'
+            },
+            id: null
+          });
+        }
+      } else if (!sessionId && isInitializeRequest(req.body)) {
+        // New initialization request - create new transport
+        console.log('New MCP session initializing');
+        console.log('  Authenticated user:', mcpUser.sub);
+        console.log('  Client ID:', mcpUser.cid);
+
+        transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: () => randomUUID(),
+          onsessioninitialized: (newSessionId) => {
+            console.log(`Session initialized with ID: ${newSessionId}`);
+            transports[newSessionId] = transport;
+            sessionAuth[newSessionId] = mcpUser;
+          }
+        });
+
+        // Set up onclose handler to clean up transport
+        transport.onclose = () => {
+          const sid = transport.sessionId;
+          if (sid) {
+            console.log(`Transport closed for session ${sid}`);
+            delete transports[sid];
+            delete sessionAuth[sid];
+          }
+        };
+
+        // Connect the transport to the MCP server
+        await server.connect(transport);
+      } else {
+        // Invalid request - no session ID or not an initialization request
+        return res.status(400).json({
+          jsonrpc: '2.0',
+          error: {
+            code: -32000,
+            message: 'Bad Request: No valid session ID provided or missing initialization'
+          },
+          id: null
+        });
+      }
+
+      // Handle the request with the transport
+      await transport.handleRequest(req, res, req.body);
+    } catch (error) {
+      console.error('Error handling MCP request:', error);
+      if (!res.headersSent) {
+        res.status(500).json({
+          jsonrpc: '2.0',
+          error: {
+            code: -32603,
+            message: 'Internal server error'
+          },
+          id: null
+        });
+      }
+    }
   });
 
-  // Secure messages endpoint with JWT verification
-  app.post('/messages', requireMcpAuth, async (req, res) => {
-    const sessionId = String(req.query.sessionId);
-    const transport = transports.get(sessionId);
+  // MCP GET endpoint - handles SSE streams (for server-to-client messages)
+  app.get('/mcp', requireMcpAuth, async (req, res) => {
     const mcpUser = (req as any).mcpUser as McpAuthClaims;
+    const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
-    if (!transport) {
-      console.error('No transport found for sessionId:', sessionId);
-      return res.status(400).json({
-        error: 'Invalid session',
-        message: 'No transport found for sessionId',
-      });
+    if (!sessionId || !transports[sessionId]) {
+      return res.status(400).send('Invalid or missing session ID');
     }
 
     // Verify the session belongs to this authenticated user
-    const sessionUser = sessionAuth.get(sessionId);
+    const sessionUser = sessionAuth[sessionId];
     if (!sessionUser || sessionUser.sub !== mcpUser.sub) {
-      console.error('Session authentication mismatch');
-      return res.status(403).json({
-        error: 'Forbidden',
-        message: 'Session does not belong to authenticated user',
-      });
+      console.error('Session authentication mismatch for SSE stream');
+      return res.status(403).send('Forbidden: Session does not belong to authenticated user');
     }
 
-    await transport.handlePostMessage(req, res, req.body);
+    // Check for Last-Event-ID header for resumability
+    const lastEventId = req.headers['last-event-id'] as string | undefined;
+    if (lastEventId) {
+      console.log(`Client reconnecting with Last-Event-ID: ${lastEventId}`);
+    } else {
+      console.log(`Establishing SSE stream for session ${sessionId}`);
+    }
+
+    const transport = transports[sessionId];
+    await transport.handleRequest(req, res);
   });
 
+  // MCP DELETE endpoint - handles session termination
+  app.delete('/mcp', requireMcpAuth, async (req, res) => {
+    const mcpUser = (req as any).mcpUser as McpAuthClaims;
+    const sessionId = req.headers['mcp-session-id'] as string | undefined;
+
+    if (!sessionId || !transports[sessionId]) {
+      return res.status(400).send('Invalid or missing session ID');
+    }
+
+    // Verify the session belongs to this authenticated user
+    const sessionUser = sessionAuth[sessionId];
+    if (!sessionUser || sessionUser.sub !== mcpUser.sub) {
+      console.error('Session authentication mismatch for termination');
+      return res.status(403).send('Forbidden: Session does not belong to authenticated user');
+    }
+
+    console.log(`Received session termination request for session ${sessionId}`);
+
+    try {
+      const transport = transports[sessionId];
+      await transport.handleRequest(req, res);
+    } catch (error) {
+      console.error('Error handling session termination:', error);
+      if (!res.headersSent) {
+        res.status(500).send('Error processing session termination');
+      }
+    }
+  });
+
+  // Error handling middleware
   app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     console.error('Error:', err);
-    res.status(500).json({
-      error: 'Internal Server Error',
-      message: err.message,
-    });
+    if (!res.headersSent) {
+      res.status(500).json({
+        error: 'Internal Server Error',
+        message: err.message,
+      });
+    }
   });
 
   app.listen(MCP_PORT, () => {
     console.log('='.repeat(60));
-    console.log('🚀 MCP Todo Server');
+    console.log('🚀 MCP Todo Server (StreamableHTTP)');
     console.log('='.repeat(60));
     console.log(`✓ Server running on http://localhost:${MCP_PORT}`);
-    console.log(`✓ SSE endpoint: http://localhost:${MCP_PORT}/sse [SECURED]`);
-    console.log(`✓ Messages endpoint: http://localhost:${MCP_PORT}/messages [SECURED]`);
+    console.log(`✓ MCP endpoint: http://localhost:${MCP_PORT}/mcp [SECURED]`);
+    console.log(`  - POST: Initialize/Send messages`);
+    console.log(`  - GET:  SSE stream (server→client)`);
+    console.log(`  - DELETE: Terminate session`);
+    console.log(`✓ MCP protected resource metadata: ${getOAuthProtectedResourceMetadataUrl(new URL(`http://localhost:${MCP_PORT}/mcp`))}`);
     console.log('='.repeat(60));
     console.log('Configuration:');
+    console.log(`  - Transport: StreamableHTTP (no SSE-only mode)`);
     console.log(`  - MCP Server Port: ${MCP_PORT}`);
     console.log(`  - Data Access: Direct Prisma operations (shared service)`);
-    console.log(`  - Auth: JWT verification on all endpoints`);
-    console.log(`  - Security: No token passthrough anti-pattern`);
+    console.log(`  - Auth: JWT verification with MCP-specific audience`);
+    console.log(`  - Expected Audience: ${process.env.MCP_EXPECTED_AUDIENCE}`);
     console.log('='.repeat(60));
     console.log('Available Tools:');
     console.log('  1. create-todo  - Create a new todo');
@@ -301,9 +433,28 @@ async function bootstrap(): Promise<void> {
     console.log('Ready to accept authenticated connections! 🎉');
     console.log('');
   });
+
+  // Handle server shutdown
+  process.on('SIGINT', async () => {
+    console.log('\nShutting down server...');
+    // Close all active transports to properly clean up resources
+    for (const sessionId in transports) {
+      try {
+        console.log(`Closing transport for session ${sessionId}`);
+        await transports[sessionId].close();
+        delete transports[sessionId];
+        delete sessionAuth[sessionId];
+      } catch (error) {
+        console.error(`Error closing transport for session ${sessionId}:`, error);
+      }
+    }
+    console.log('Server shutdown complete');
+    process.exit(0);
+  });
 }
 
 bootstrap().catch((error) => {
   console.error('Failed to start MCP server:', error);
   process.exit(1);
 });
+

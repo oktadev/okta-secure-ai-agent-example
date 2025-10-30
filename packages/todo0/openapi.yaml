@@ -4,7 +4,7 @@ info:
   version: 1.0.0
   description: API for managing todos with session or Bearer token authentication
 servers:
-  - url: http://localhost:3001
+  - url: http://localhost:5001
 paths:
   /todos:
     get:
