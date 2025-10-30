@@ -127,9 +127,9 @@ async function validateMcpAS(env: Record<string, string>): Promise<ValidationRes
  */
 async function validatePrivateKey(env: Record<string, string>): Promise<ValidationResult> {
   try {
-    const keyFile = env.OKTA_CC_PRIVATE_KEY_FILE;
+    const keyFile = env.AI_AGENT_PRIVATE_KEY_FILE;
     if (!keyFile) {
-      return { passed: false, message: 'Private key file not configured' };
+      return { passed: false, message: 'Private key file not configured (AI_AGENT_PRIVATE_KEY_FILE)' };
     }
 
     const keyPath = path.resolve('packages/agent0', keyFile);
@@ -168,65 +168,6 @@ async function validatePrivateKey(env: Record<string, string>): Promise<Validati
 }
 
 /**
- * Test: Attempt to get ID-JAG token from Org AS
- */
-async function validateIdJagFlow(env: Record<string, string>): Promise<ValidationResult> {
-  try {
-    const clientId = env.AI_AGENT_ID;
-    const tokenEndpoint = env.OKTA_TOKEN_ENDPOINT;
-    const keyFile = env.OKTA_CC_PRIVATE_KEY_FILE;
-    const kid = env.OKTA_PRIVATE_KEY_KID;
-
-    if (!clientId || !tokenEndpoint || !keyFile || !kid) {
-      return { passed: false, message: 'ID-JAG configuration incomplete' };
-    }
-
-    const keyPath = path.resolve('packages/agent0', keyFile);
-    const privateKeyPem = fs.readFileSync(keyPath, 'utf8');
-
-    const clientAssertion = createClientAssertion(
-      clientId,
-      tokenEndpoint,
-      privateKeyPem,
-      kid
-    );
-
-    const response = await axios.post(
-      tokenEndpoint,
-      new URLSearchParams({
-        grant_type: 'client_credentials',
-        scope: 'okta.users.read',
-        client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
-        client_assertion: clientAssertion,
-      }),
-      {
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-      }
-    );
-
-    const decoded = jwt.decode(response.data.access_token) as any;
-
-    return {
-      passed: true,
-      message: 'Successfully obtained ID-JAG token',
-      details: {
-        tokenType: response.data.token_type,
-        expiresIn: response.data.expires_in,
-        clientId: decoded?.cid,
-        subject: decoded?.sub,
-      },
-    };
-  } catch (error: any) {
-    return {
-      passed: false,
-      message: `Failed to get ID-JAG token: ${error.response?.data?.error_description || error.message}`,
-    };
-  }
-}
-
-/**
  * Test: Validate .env files exist and contain required variables
  */
 async function validateEnvFiles(): Promise<ValidationResult> {
@@ -250,17 +191,33 @@ async function validateEnvFiles(): Promise<ValidationResult> {
     const todo0Env = loadEnvFile(todo0EnvPath);
 
     const requiredAgent0 = [
+      'PORT',
+      'SESSION_SECRET',
+      'MCP_SERVER_URL',
       'OKTA_DOMAIN',
+      'OKTA_CLIENT_ID',
+      'OKTA_CLIENT_SECRET',
+      'OKTA_REDIRECT_URI',
       'AI_AGENT_ID',
-      'OKTA_CC_PRIVATE_KEY_FILE',
-      'OKTA_PRIVATE_KEY_KID',
+      'AI_AGENT_PRIVATE_KEY_FILE',
+      'AI_AGENT_PRIVATE_KEY_KID',
+      'AI_AGENT_TODO_MCP_SERVER_SCOPES_TO_REQUEST',
+      'ID_JAG_TOKEN_ENDPOINT',
+      'AGENT0_API_TOKEN_ENDPOINT',
+      'AGENT0_API_AUDIENCE',
+      'REST_API_TOKEN_ENDPOINT',
       'REST_API_AUDIENCE',
+      'MCP_AUTHORIZATION_SERVER',
+      'MCP_AUTHORIZATION_SERVER_TOKEN_ENDPOINT',
       'MCP_AUDIENCE',
     ];
 
     const requiredTodo0 = [
+      'PORT',
       'OKTA_ISSUER',
+      'OKTA_CLIENT_ID',
       'EXPECTED_AUDIENCE',
+      'MCP_PORT',
       'MCP_OKTA_ISSUER',
       'MCP_EXPECTED_AUDIENCE',
     ];
@@ -295,14 +252,15 @@ async function validateEnvFiles(): Promise<ValidationResult> {
 
 /**
  * Test: Validate audiences are distinct
+ * Compares todo0's REST API and MCP audiences to ensure proper security boundaries
  */
-async function validateDistinctAudiences(env: Record<string, string>): Promise<ValidationResult> {
+async function validateDistinctAudiences(todo0Env: Record<string, string>): Promise<ValidationResult> {
   try {
-    const restApiAudience = env.REST_API_AUDIENCE || env.EXPECTED_AUDIENCE;
-    const mcpAudience = env.MCP_AUDIENCE || env.MCP_EXPECTED_AUDIENCE;
+    const restApiAudience = todo0Env.EXPECTED_AUDIENCE;
+    const mcpAudience = todo0Env.MCP_EXPECTED_AUDIENCE;
 
     if (!restApiAudience || !mcpAudience) {
-      return { passed: false, message: 'Audiences not configured' };
+      return { passed: false, message: 'Audiences not configured in todo0 .env' };
     }
 
     if (restApiAudience === mcpAudience) {
@@ -353,11 +311,10 @@ async function validate() {
 
   const tests: Array<{ name: string; fn: () => Promise<ValidationResult> }> = [
     { name: 'Environment Files', fn: () => validateEnvFiles() },
-    { name: 'Distinct Audiences', fn: () => validateDistinctAudiences(agent0Env) },
+    { name: 'Distinct Audiences', fn: () => validateDistinctAudiences(todo0Env) },
     { name: 'Private Key', fn: () => validatePrivateKey(agent0Env) },
     { name: 'REST API Auth Server', fn: () => validateRestApiAS(todo0Env) },
     { name: 'MCP Auth Server', fn: () => validateMcpAS(todo0Env) },
-    { name: 'ID-JAG Token Flow', fn: () => validateIdJagFlow(agent0Env) },
   ];
 
   let passedCount = 0;

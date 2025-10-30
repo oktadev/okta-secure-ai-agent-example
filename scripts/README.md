@@ -8,7 +8,7 @@ These scripts automate the creation and configuration of Okta resources required
 
 - **Two Custom Authorization Servers**:
   - `todo0-rest-api` - For REST API endpoints (port 5001)
-  - `todo0-mcp-server` - For MCP server endpoints (port 3001)
+  - `todo0-mcp-server` - For MCP server endpoints (port 5002)
 - **Two OIDC Applications**:
   - `agent0` - OIDC client for agent0 resource server (human SSO)
   - `todo0` - OIDC client for todo0 application (human SSO)
@@ -115,7 +115,7 @@ pnpm run rollback:okta
 |--------|----------|---------|--------|
 | **Org AS** | - | Human SSO, ID-JAG issuance | Default |
 | **REST API AS** | `api://todo0` | Protect REST API (port 5001) | `create:todos`, `read:todos`, etc. |
-| **MCP AS** | `mcp://todo0` | Protect MCP server (port 3001) | `mcp:connect`, `mcp:tools:todos` |
+| **MCP AS** | `mcp://todo0` | Protect MCP server (port 5002) | `mcp:connect`, `mcp:tools:read`, `mcp:tools:manage` |
 
 ### Token Flow
 

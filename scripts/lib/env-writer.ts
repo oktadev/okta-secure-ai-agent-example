@@ -20,6 +20,7 @@ export interface BootstrapConfig {
   restApiAudience: string;
   mcpAuthServerId: string;
   mcpAudience: string;
+  mcpScopes: string[];
 }
 
 /**
@@ -35,7 +36,7 @@ SESSION_SECRET=default-secret-change-in-production
 # ============================================================================
 # AGENT - MCP CLIENT CONFIGURATION
 # ============================================================================
-MCP_SERVER_URL=http://localhost:3001
+MCP_SERVER_URL=http://localhost:5002/mcp
 
 # ============================================================================
 # AGENT - LLM INTEGRATION CONFIGURATION
@@ -65,11 +66,12 @@ OKTA_REDIRECT_URI=http://localhost:3000/callback
 # ============================================================================
 # Agent Identity Configuration
 AI_AGENT_ID=${config.agentIdentityClientId}
-OKTA_CC_PRIVATE_KEY_FILE=${config.privateKeyFile}
-OKTA_PRIVATE_KEY_KID=${config.keyId}
+AI_AGENT_PRIVATE_KEY_FILE=${config.privateKeyFile}
+AI_AGENT_PRIVATE_KEY_KID=${config.keyId}
+AI_AGENT_TODO_MCP_SERVER_SCOPES_TO_REQUEST=${config.mcpScopes.join(' ')}
 
 # Token Endpoints
-OKTA_TOKEN_ENDPOINT=https://${config.oktaDomain}/oauth2/v1/token
+ID_JAG_TOKEN_ENDPOINT=https://${config.oktaDomain}/oauth2/v1/token
 
 # Agent0 API Authorization Server (for agent0's own APIs)
 AGENT0_API_TOKEN_ENDPOINT=https://${config.oktaDomain}/oauth2/${config.agent0ApiAuthServerId}/v1/token
@@ -80,12 +82,10 @@ REST_API_TOKEN_ENDPOINT=https://${config.oktaDomain}/oauth2/${config.restApiAuth
 REST_API_AUDIENCE=${config.restApiAudience}
 
 # MCP Authorization Server (for todo0 MCP server)
-MCP_TOKEN_ENDPOINT=https://${config.oktaDomain}/oauth2/${config.mcpAuthServerId}/v1/token
+MCP_AUTHORIZATION_SERVER=https://${config.oktaDomain}/oauth2/${config.mcpAuthServerId}
+MCP_AUTHORIZATION_SERVER_TOKEN_ENDPOINT=https://${config.oktaDomain}/oauth2/${config.mcpAuthServerId}/v1/token
 MCP_AUDIENCE=${config.mcpAudience}
 
-# Legacy/compatibility (points to REST API AS)
-TARGET_SERVICE_AUDIENCE=${config.restApiAudience}
-RESOURCE_TOKEN_ENDPOINT=https://${config.oktaDomain}/oauth2/${config.restApiAuthServerId}/v1/token
 `;
 }
 
@@ -108,13 +108,12 @@ EXPECTED_AUDIENCE=${config.restApiAudience}
 # ============================================================================
 # MCP SERVER CONFIGURATION
 # ============================================================================
-MCP_PORT=3001
+MCP_PORT=5002
 
 # ============================================================================
 # MCP SERVER - OKTA JWT AUTHENTICATION
 # ============================================================================
 MCP_OKTA_ISSUER=https://${config.oktaDomain}/oauth2/${config.mcpAuthServerId}
-MCP_OKTA_CLIENT_ID=${config.agentIdentityClientId}
 MCP_EXPECTED_AUDIENCE=${config.mcpAudience}
 
 # ============================================================================
@@ -189,11 +188,11 @@ Generated: ${new Date().toISOString()}
 - **ID**: \`${config.mcpAuthServerId}\`
 - **Issuer**: https://${config.oktaDomain}/oauth2/${config.mcpAuthServerId}
 - **Audience**: \`${config.mcpAudience}\`
-- **Purpose**: Protect todo0 MCP server endpoints (port 3001)
+- **Purpose**: Protect todo0 MCP server endpoints (port 5002)
 - **Scopes**:
-  - \`mcp:connect\` - Establish MCP SSE connection
-  - \`mcp:tools:todos\` - Execute todo management tools
-  - \`mcp:tools:admin\` - Administrative tool operations
+  - \`mcp:connect\` - Establish MCP connection
+  - \`mcp:tools:read\` - Execute tools to read todo data
+  - \`mcp:tools:manage\` - Execute tools to manage todo data
 
 ## Applications
 
@@ -257,7 +256,7 @@ Agent Identity → MCP AS (/oauth2/${config.mcpAuthServerId}/v1/token)
 | **Agent0 Web UI** | 3000 | Org AS | - | Session-based |
 | **Agent0 APIs** | 3000 | Agent0 API AS | \`${config.agent0ApiAudience}\` | JWT (requireAuth) |
 | **Todo0 REST API** | 5001 | Todo0 REST API AS | \`${config.restApiAudience}\` | JWT (requireAuth) |
-| **Todo0 MCP Server** | 3001 | Todo0 MCP AS | \`${config.mcpAudience}\` | JWT (requireMcpAuth) |
+| **Todo0 MCP Server** | 5002 | Todo0 MCP AS | \`${config.mcpAudience}\` | JWT (requireMcpAuth) |
 
 ## Files Generated
 

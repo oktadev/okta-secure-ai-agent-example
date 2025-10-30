@@ -19,6 +19,8 @@ export interface RollbackState {
   mcpAuthServerIds: string[];
   agent0AppIds: string[];
   todo0AppIds: string[];
+  agent0AppUserIds: string[];
+  todo0AppUserIds: string[];
   agentIdentityIds: string[];
   agentConnections: AgentConnectionInfo[];
   agentOwnerSetupMethod?: 'standard' | 'developer';
@@ -44,6 +46,8 @@ export function createEmptyState(oktaDomain: string): RollbackState {
     mcpAuthServerIds: [],
     agent0AppIds: [],
     todo0AppIds: [],
+    agent0AppUserIds: [],
+    todo0AppUserIds: [],
     agentIdentityIds: [],
     agentConnections: [],
     agentOwnerSetupMethod: undefined,
@@ -77,6 +81,8 @@ export function loadRollbackState(oktaDomain: string): RollbackState {
       mcpAuthServerIds: state.mcpAuthServerIds || [],
       agent0AppIds: state.agent0AppIds || [],
       todo0AppIds: state.todo0AppIds || [],
+      agent0AppUserIds: state.agent0AppUserIds || [],
+      todo0AppUserIds: state.todo0AppUserIds || [],
       agentIdentityIds: state.agentIdentityIds || [],
       agentConnections: state.agentConnections || [],
       agentOwnerSetupMethod: state.agentOwnerSetupMethod,
@@ -110,6 +116,8 @@ export function updateRollbackState(
     mcpAuthServerIds: mergeArrays(currentState.mcpAuthServerIds, updates.mcpAuthServerIds),
     agent0AppIds: mergeArrays(currentState.agent0AppIds, updates.agent0AppIds),
     todo0AppIds: mergeArrays(currentState.todo0AppIds, updates.todo0AppIds),
+    agent0AppUserIds: mergeArrays(currentState.agent0AppUserIds, updates.agent0AppUserIds),
+    todo0AppUserIds: mergeArrays(currentState.todo0AppUserIds, updates.todo0AppUserIds),
     agentIdentityIds: mergeArrays(currentState.agentIdentityIds, updates.agentIdentityIds),
     agentConnections: mergeConnectionArrays(currentState.agentConnections, updates.agentConnections),
     agentOwnerSetupMethod: updates.agentOwnerSetupMethod !== undefined ? updates.agentOwnerSetupMethod : currentState.agentOwnerSetupMethod,

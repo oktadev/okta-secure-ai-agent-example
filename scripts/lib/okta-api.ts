@@ -303,4 +303,26 @@ export class OktaAPIClient {
       policyId,
     });
   }
+
+  /**
+   * Assign a user to an application
+   */
+  async assignUserToApplication(appId: string, userId: string): Promise<void> {
+    await this.client.applicationApi.assignUserToApplication({
+      appId,
+      appUser: {
+        id: userId,
+      },
+    });
+  }
+
+  /**
+   * Unassign a user from an application
+   */
+  async unassignUserFromApplication(appId: string, userId: string): Promise<void> {
+    await this.client.applicationApi.unassignUserFromApplication({
+      appId,
+      userId,
+    });
+  }
 }

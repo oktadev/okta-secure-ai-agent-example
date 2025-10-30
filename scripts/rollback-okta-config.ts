@@ -19,6 +19,8 @@ interface RollbackState {
   mcpAuthServerIds: string[];
   agent0AppIds: string[];
   todo0AppIds: string[];
+  agent0AppUserIds: string[];
+  todo0AppUserIds: string[];
   agentIdentityIds: string[];
   agentConnections: AgentConnectionInfo[];
   agentOwnerSetupMethod?: 'standard' | 'developer';
@@ -89,8 +91,14 @@ async function rollback() {
   if (state.agent0AppIds?.length > 0) {
     console.log(chalk.gray(`  • agent0 Applications (${state.agent0AppIds.length})`));
   }
+  if (state.agent0AppUserIds?.length > 0) {
+    console.log(chalk.gray(`  • agent0 Application User Assignments (${state.agent0AppUserIds.length})`));
+  }
   if (state.todo0AppIds?.length > 0) {
     console.log(chalk.gray(`  • todo0 Applications (${state.todo0AppIds.length})`));
+  }
+  if (state.todo0AppUserIds?.length > 0) {
+    console.log(chalk.gray(`  • todo0 Application User Assignments (${state.todo0AppUserIds.length})`));
   }
   if (state.agent0ApiPolicyIds?.length > 0) {
     console.log(chalk.gray(`  • Agent0 API Policies (${state.agent0ApiPolicyIds.length})`));
@@ -329,6 +337,35 @@ async function rollback() {
           await agentClient.pollOperation(deletionUrl);
 
           spinner.succeed(`Agent identity deleted`);
+          deletedCount++;
+        } catch (error: any) {
+          spinner.fail(`Failed: ${error.message}`);
+          errorCount++;
+        }
+      }
+    }
+
+    // Step 4.5: Unassign Users from Applications (must be before deleting applications)
+    if (state.agent0AppUserIds && state.agent0AppUserIds.length > 0 && state.agent0AppIds && state.agent0AppIds.length > 0) {
+      for (const userId of state.agent0AppUserIds) {
+        const spinner = ora(`Unassigning user ${userId} from agent0 application...`).start();
+        try {
+          await oktaClient.unassignUserFromApplication(state.agent0AppIds[0], userId);
+          spinner.succeed(`User unassigned from agent0 application`);
+          deletedCount++;
+        } catch (error: any) {
+          spinner.fail(`Failed: ${error.message}`);
+          errorCount++;
+        }
+      }
+    }
+
+    if (state.todo0AppUserIds && state.todo0AppUserIds.length > 0 && state.todo0AppIds && state.todo0AppIds.length > 0) {
+      for (const userId of state.todo0AppUserIds) {
+        const spinner = ora(`Unassigning user ${userId} from todo0 application...`).start();
+        try {
+          await oktaClient.unassignUserFromApplication(state.todo0AppIds[0], userId);
+          spinner.succeed(`User unassigned from todo0 application`);
           deletedCount++;
         } catch (error: any) {
           spinner.fail(`Failed: ${error.message}`);

@@ -19,6 +19,7 @@ export async function generateRSAKeyPair(): Promise<KeyPair> {
   // Generate RSA key pair using jose
   const { publicKey, privateKey } = await jose.generateKeyPair('RS256', {
     modulusLength: 2048,
+    extractable: true,
   });
 
   // Export keys to PEM format

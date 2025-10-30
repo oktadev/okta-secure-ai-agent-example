@@ -200,8 +200,8 @@ async function bootstrap() {
     spinner = ora('Adding MCP scopes...').start();
     await oktaClient.addScopes(mcpAS.id!, [
       { name: 'mcp:connect', description: 'Establish MCP SSE connection' },
-      { name: 'mcp:tools:todos', description: 'Execute todo management tools' },
-      { name: 'mcp:tools:admin', description: 'Administrative tool operations' },
+      { name: 'mcp:tools:read', description: 'Use tools that read todo data' },
+      { name: 'mcp:tools:manage', description: 'Use tools that manage todo data' },
     ]);
     spinner.succeed('MCP scopes added');
 
@@ -273,6 +273,27 @@ async function bootstrap() {
     });
     spinner.succeed(`todo0 OIDC app created: ${chalk.cyan(todo0AppId)}`);
 
+    // Step 5.5: Assign Current User to Applications
+    console.log(chalk.bold('\n📋 Step 5.5: Assigning User to Applications'));
+    spinner = ora('Getting current user...').start();
+
+    const currentUser = await agentClient.getCurrentUser();
+    spinner.succeed(`Current user: ${chalk.cyan(currentUser.login)}`);
+
+    spinner = ora('Assigning user to agent0 application...').start();
+    await oktaClient.assignUserToApplication(agent0AppId, currentUser.id);
+    rollbackState = updateRollbackState(rollbackState, {
+      agent0AppUserIds: [currentUser.id],
+    });
+    spinner.succeed('User assigned to agent0 application');
+
+    spinner = ora('Assigning user to todo0 application...').start();
+    await oktaClient.assignUserToApplication(todo0AppId, currentUser.id);
+    rollbackState = updateRollbackState(rollbackState, {
+      todo0AppUserIds: [currentUser.id],
+    });
+    spinner.succeed('User assigned to todo0 application');
+
     // Step 6: Generate RSA Key Pair
     console.log(chalk.bold('\n📋 Step 6: Generating RSA Key Pair for Agent'));
     spinner = ora('Generating 2048-bit RSA key pair...').start();
@@ -284,7 +305,6 @@ async function bootstrap() {
 
     // Step 7: Create Agent Identity
     console.log(chalk.bold('\n📋 Step 7: Creating Agent Identity'));
-    console.log(chalk.yellow('⚠️  Using custom Okta Agent Identity API (not in public SDK)'));
     spinner = ora('Registering agent identity...').start();
 
     let agentIdentityId: string;
@@ -402,6 +422,9 @@ async function bootstrap() {
       const orgMetadata = await agentClient.getOrgMetadata();
       const authServerOrn = constructAuthServerORN(orgMetadata.id, mcpAS.id!);
 
+      // Define MCP scopes granted to the agent
+      const mcpScopes = ['mcp:connect', 'mcp:tools:read', 'mcp:tools:manage'];
+
       // Create connection
       const connection = await agentClient.createConnection(agentIdentityId, {
         connectionType: 'IDENTITY_ASSERTION_CUSTOM_AS',
@@ -410,8 +433,11 @@ async function bootstrap() {
           resourceIndicator: config.mcpAudience,
         },
         scopeCondition: 'INCLUDE_ONLY',
-        scopes: ['mcp:connect', 'mcp:tools:todos'],
+        scopes: mcpScopes,
       });
+
+      // Save MCP scopes to config for .env generation
+      bootstrapConfig.mcpScopes = mcpScopes;
 
       rollbackState = updateRollbackState(rollbackState, {
         agentConnections: [{ agentId: agentIdentityId, connectionId: connection.id }],
@@ -505,7 +531,7 @@ async function bootstrap() {
         'urn:ietf:params:oauth:grant-type:token-exchange',
         'urn:ietf:params:oauth:grant-type:jwt-bearer',
       ],
-      scopes: ['mcp:connect', 'mcp:tools:todos'],
+      scopes: ['mcp:connect', 'mcp:tools:read', 'mcp:tools:manage'],
       accessTokenLifetimeMinutes: 60,
       refreshTokenLifetimeMinutes: 129600,
       refreshTokenWindowMinutes: 10080,
@@ -521,7 +547,7 @@ async function bootstrap() {
 
     await oktaClient.createTrustedOrigin('agent0-ui', 'http://localhost:3000');
     await oktaClient.createTrustedOrigin('todo0-rest-api', 'http://localhost:5001');
-    await oktaClient.createTrustedOrigin('todo0-mcp-server', 'http://localhost:3001');
+    await oktaClient.createTrustedOrigin('todo0-mcp-server', 'http://localhost:5002');
 
     rollbackState = updateRollbackState(rollbackState, {
       trustedOriginNames: ['agent0-ui', 'todo0-rest-api', 'todo0-mcp-server'],
