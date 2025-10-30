@@ -116,39 +116,6 @@ graph TB
 - `toggle-todo`: Toggle the completed status of a todo
 - `delete-todo`: Delete a todo (own todos or admin access)
 
-## Run Instructions
-
-### Install dependencies
-
-```sh
-pnpm install
-pnpm build
-```
-
-### Bootstrap prisma client
-
-```sh
-pnpm boostrap
-```
-
-### Start REST API (todo0)
-
-```sh
-pnpm run start:todo0
-```
-
-### Start MCP Server (todo0)
-
-```sh
-pnpm run start:mcp
-```
-
-### Start MCP Client (agent0)
-
-```sh
-pnpm run start:client0
-```
-
 ## Setup
 
 ### Prerequisites
@@ -241,6 +208,52 @@ If you prefer to manually configure Okta and create your own .env files, refer t
 
 - `packages/agent0/.env.example`
 - `packages/todo0/.env.example`
+
+## Install & build
+
+### 1. Install dependencies
+
+```sh
+pnpm install
+```
+
+### 2. Approve builds & build
+
+```sh
+pnpm approve-builds
+```
+
+### 3. Bootstrap prisma client
+
+```sh
+pnpm boostrap
+```
+
+### 4. Build
+
+```sh
+pnpm build
+```
+
+## Running the demo services
+
+### 5. Start todo 0 application
+
+```sh
+pnpm run start:todo0
+```
+
+### 6. Start todo0 MCP server
+
+```sh
+pnpm run start:mcp
+```
+
+### 7. Start MCP Client (agent0)
+
+```sh
+pnpm run start:client0
+```
 
 ## Notes
 
