@@ -2,9 +2,9 @@
 import express, { Request, Response } from 'express';
 import * as path from 'path';
 import cookieParser from 'cookie-parser';
-import { getAgentForSession, UserContext } from './agent.js';
+import { getAgentForSession } from './agent.js';
 import { OktaAuthHelper, OktaConfig, createSessionMiddleware } from './auth/okta-auth.js';
-import { TokenExchangeHandler, TokenExchangeConfig, createTokenExchangeConfig } from './auth/token-exchange.js';
+import { TokenExchangeHandler, createTokenExchangeConfig } from './auth/token-exchange.js';
 
 // ============================================================================
 // Resource Server Configuration

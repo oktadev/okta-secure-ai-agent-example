@@ -3,7 +3,6 @@ import path from 'path';
 import * as dotenv from 'dotenv';
 import { disconnectAll } from './agent.js';
 import { ResourceServer, ResourceServerConfig } from './resource-server.js';
-import { OktaConfig } from './auth/okta-auth.js';
 
 // Load environment variables
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
@@ -34,7 +33,7 @@ async function bootstrap(): Promise<void> {
       clientId: process.env.OKTA_CLIENT_ID,
       clientSecret: process.env.OKTA_CLIENT_SECRET,
       redirectUri: process.env.OKTA_REDIRECT_URI || `http://localhost:${port}/callback`,
-    } as OktaConfig;
+    };
   }
 
   const resourceServer = new ResourceServer(resourceServerConfig);

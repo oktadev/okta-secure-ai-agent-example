@@ -1,7 +1,7 @@
 // agent.ts - Agent Identity: MCP Client + LLM Integration
 import path from 'path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { SSEClientTransport, SSEClientTransportOptions } from '@modelcontextprotocol/sdk/client/sse.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import Anthropic from '@anthropic-ai/sdk';
 import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
 import { TokenExchangeHandler, createTokenExchangeConfig } from './auth/token-exchange.js';
@@ -43,7 +43,7 @@ export interface UserContext {
 }
 
 const agentConfig: Omit<AgentConfig, 'idToken' | 'userContext'> = {
-  mcpServerUrl: process.env.MCP_SERVER_URL || 'http://localhost:5002',
+  mcpServerUrl: process.env.MCP_SERVER_URL || 'http://localhost:5002/mcp',
   name: 'agent0',
   version: '1.0.0',
   // Anthropic Direct
@@ -109,7 +109,7 @@ export async function disconnectAll(): Promise<void> {
 
 export class Agent {
   private client: Client;
-  private transport: SSEClientTransport | null = null;
+  private transport: StreamableHTTPClientTransport | null = null;
   private config: AgentConfig;
   private isConnected = false;
   private availableTools: any[] = [];
@@ -119,7 +119,6 @@ export class Agent {
     role: 'user' | 'assistant';
     content: string | Array<any>;
   }> = [];
-  private accessToken: string | null = null;
   private tokenExchangeHandler: TokenExchangeHandler | null = null;
 
   constructor(config: AgentConfig) {
@@ -136,7 +135,7 @@ export class Agent {
       }
     );
 
-    // Initialize Token Exchange if configured
+    // Initialize Token Exchange Handler if configured
     const tokenExchangeConfig = createTokenExchangeConfig();
     if (tokenExchangeConfig) {
       this.tokenExchangeHandler = new TokenExchangeHandler(tokenExchangeConfig);
@@ -178,33 +177,37 @@ export class Agent {
       return false;
     }
 
-    if (!this.accessToken)  {
-      console.warn('⚠️ No access token set. MCP connection not yet viable. Need to perform a token exchange first.');
-      const token = await this.tokenExchangeHandler?.exchangeToken(this.config.idToken);
-      console.log(' ✅ Got an access token for the MCP server via XAA token exchange.');
-      if (token && token.access_token) {
-        this.setAccessToken(token.access_token);
-      } else {
-        console.error('❌ Token exchange failed. Cannot connect to MCP server without access token.');
-        return false;
-      }
+    if (!this.tokenExchangeHandler) {
+      console.error('❌ Token exchange not configured. Cannot connect to MCP server.');
+      return false;
     }
 
     try {
       console.log('🔌 Connecting to MCP server...');
       console.log(`   Server: ${this.config.mcpServerUrl}`);
+      console.log('   Performing token exchange: ID Token → ID-JAG → MCP Access Token');
 
-      const clientTransportOptions: SSEClientTransportOptions = {
-        requestInit: {
-          headers: {
-            'Authorization': `Bearer ${this.accessToken || ''}`,
-          }
+      // Perform token exchange to get MCP access token
+      const tokenResult = await this.tokenExchangeHandler.exchangeToken(this.config.idToken);
+
+      if (!tokenResult.success || !tokenResult.access_token) {
+        throw new Error('Token exchange failed or did not return access token');
+      }
+
+      console.log('✅ Token exchange successful');
+      console.log(`⏰ Token expires in: ${tokenResult.expires_in}s`);
+
+      // Create transport with access token in Authorization header
+      this.transport = new StreamableHTTPClientTransport(
+        new URL(this.config.mcpServerUrl),
+        {
+          requestInit: {
+            headers: {
+              'Authorization': `Bearer ${tokenResult.access_token}`
+            }
+          },
+          
         }
-      };
-
-      this.transport = new SSEClientTransport(
-        new URL(`${this.config.mcpServerUrl}/sse`),
-        clientTransportOptions
       );
 
       await this.client.connect(this.transport);
@@ -281,21 +284,16 @@ export class Agent {
   }
 
   // ============================================================================
-  // Access Token Management
+  // Auth Provider Management
   // ============================================================================
 
-  setAccessToken(token: string): void {
-    this.accessToken = token;
-    console.log('🔑 Access token set for MCP tool calls');
-  }
-
-  clearAccessToken(): void {
-    this.accessToken = null;
-    console.log('🔓 Access token cleared');
-  }
-
-  hasAccessToken(): boolean {
-    return this.accessToken !== null;
+  /**
+   * Update the ID token (useful when session is refreshed)
+   * Note: Will need to reconnect to MCP server with new token
+   */
+  updateIdToken(newIdToken: string): void {
+    this.config.idToken = newIdToken;
+    console.log('🔑 ID token updated - reconnect to MCP server for new access token');
   }
 
   getAvailableTools(): any[] {

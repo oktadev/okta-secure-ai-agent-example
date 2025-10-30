@@ -14,9 +14,9 @@ export interface TokenExchangeConfig {
   clientId: string;
   privateKeyFile: string;
   privateKeyKid: string;
-  targetAudience: string;
-  tokenEndpoint: string;
-  resourceTokenEndpoint?: string;
+  mcpAuthorizationServer: string;
+  mcpAuthorizationServerTokenEndpoint: string;
+  agentScopes: string;
 }
 
 // ============================================================================
@@ -82,14 +82,13 @@ export class TokenExchangeHandler {
     formData.append('requested_token_type', 'urn:ietf:params:oauth:token-type:id-jag');
     formData.append('subject_token', idToken);
     formData.append('subject_token_type', 'urn:ietf:params:oauth:token-type:id_token');
-    formData.append('audience', this.config.targetAudience);
-    // formData.append('client_id', this.config.clientId);
-    formData.append('scope', 'read:todo0');
+    formData.append('audience', this.config.mcpAuthorizationServer);
+    formData.append('scope', this.config.agentScopes);
     formData.append('client_assertion_type', 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer');
     formData.append('client_assertion', clientAssertion);
 
     console.log(`🔄 Step 1: Exchanging ID token for ID-JAG token...`);
-    console.log(`📍 Audience: ${this.config.targetAudience}`);
+    console.log(`📍 Audience: ${this.config.mcpAuthorizationServer}`);
     console.log(`🆔 Client ID: ${this.config.clientId}`);
 
     const response = await axios.post(
@@ -118,13 +117,13 @@ export class TokenExchangeHandler {
     expires_in: number;
     scope?: string;
   }> {
-    const resourceTokenEndpoint = this.config.resourceTokenEndpoint ||
-      `https://${this.config.oktaDomain}/oauth2/default/v1/token`;
+    const mcpAuthorizationServer = this.config.mcpAuthorizationServer;
+    const mcpAuthorizationServerTokenEndpoint = this.config.mcpAuthorizationServerTokenEndpoint;
 
     console.log(`🔄 Step 2: Exchanging ID-JAG for Access Token at Resource Server...`);
-    console.log(`📍 Resource Token Endpoint: ${resourceTokenEndpoint}`);
+    console.log(`📍 MCP authorization server: ${mcpAuthorizationServer}`);
 
-    const clientAssertion = this.createClientAssertion(resourceTokenEndpoint);
+    const clientAssertion = this.createClientAssertion(mcpAuthorizationServerTokenEndpoint);
 
     const resourceTokenForm = new URLSearchParams();
     resourceTokenForm.append('grant_type', 'urn:ietf:params:oauth:grant-type:jwt-bearer');
@@ -133,7 +132,7 @@ export class TokenExchangeHandler {
     resourceTokenForm.append('client_assertion', clientAssertion);
 
     const response = await axios.post(
-      resourceTokenEndpoint,
+      mcpAuthorizationServerTokenEndpoint,
       resourceTokenForm,
       {
         headers: {
@@ -256,16 +255,17 @@ export class TokenExchangeHandler {
 // ============================================================================
 
 export function createTokenExchangeConfig(): TokenExchangeConfig | null {
-  const targetAudience = process.env.TARGET_SERVICE_AUDIENCE;
-  const tokenEndpoint = process.env.OKTA_TOKEN_ENDPOINT;
-  const clientId = process.env.AI_AGENT_ID;
+  const mcpAuthorizationServer = process.env.MCP_AUTHORIZATION_SERVER;
+  const mcpAuthorizationServerTokenEndpoint = process.env.MCP_AUTHORIZATION_SERVER_TOKEN_ENDPOINT;
   const oktaDomain = process.env.OKTA_DOMAIN;
-  const privateKeyFile = process.env.OKTA_CC_PRIVATE_KEY_FILE;
-  const privateKeyKid = process.env.OKTA_PRIVATE_KEY_KID;
+  const clientId = process.env.AI_AGENT_ID;
+  const privateKeyFile = process.env.AI_AGENT_PRIVATE_KEY_FILE;
+  const privateKeyKid = process.env.AI_AGENT_PRIVATE_KEY_KID;
+  const agentScopes = process.env.AI_AGENT_TODO_MCP_SERVER_SCOPES_TO_REQUEST;
 
-  if (!targetAudience || !tokenEndpoint || !clientId || !oktaDomain || !privateKeyFile || !privateKeyKid) {
+  if (!mcpAuthorizationServer || !mcpAuthorizationServerTokenEndpoint || !clientId || !oktaDomain || !privateKeyFile || !privateKeyKid || !agentScopes) {
     console.warn('⚠️  Cross-app access not fully configured. Missing required environment variables.');
-    console.warn('   Required: TARGET_SERVICE_AUDIENCE, OKTA_TOKEN_ENDPOINT, AI_AGENT_ID, OKTA_DOMAIN, OKTA_CC_PRIVATE_KEY_FILE, OKTA_PRIVATE_KEY_KID');
+    console.warn('   Required: MCP_AUTHORIZATION_SERVER, ID_JAG_TOKEN_ENDPOINT, AI_AGENT_ID, OKTA_DOMAIN, AI_AGENT_PRIVATE_KEY_FILE, AI_AGENT_PRIVATE_KEY_KID, AI_AGENT_TODO_MCP_SERVER_SCOPES_TO_REQUEST');
     return null;
   }
 
@@ -274,8 +274,8 @@ export function createTokenExchangeConfig(): TokenExchangeConfig | null {
     clientId,
     privateKeyFile,
     privateKeyKid,
-    targetAudience,
-    tokenEndpoint,
-    resourceTokenEndpoint: process.env.RESOURCE_TOKEN_ENDPOINT,
+    mcpAuthorizationServer,
+    mcpAuthorizationServerTokenEndpoint,
+    agentScopes
   };
 }
