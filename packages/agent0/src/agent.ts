@@ -4,12 +4,12 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import Anthropic from '@anthropic-ai/sdk';
 import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
-import { TokenExchangeHandler, createTokenExchangeConfig } from './auth/token-exchange.js';
+import { TokenExchangeHandler, TokenExchangeConfig } from './auth/token-exchange.js';
 import { Request } from 'express';
 import * as dotenv from 'dotenv';
 
-// Load environment variables
-dotenv.config({ path: path.resolve(__dirname, '../.env') });
+// Load environment variables for agent
+dotenv.config({ path: path.resolve(__dirname, '../.env.agent') });
 
 // ============================================================================
 // Agent Configuration
@@ -23,6 +23,9 @@ export interface AgentConfig {
   // This instance is bound to a particular user and id token
   userContext: UserContext;
   idToken: string;
+
+  // Token Exchange Config
+  tokenExchange?: TokenExchangeConfig;
 
   // Anthropic Direct
   anthropicApiKey?: string;
@@ -42,10 +45,36 @@ export interface UserContext {
   sub: string;
 }
 
+// Build TokenExchangeConfig from environment variables
+const buildTokenExchangeConfig = (): TokenExchangeConfig | undefined => {
+  const mcpAuthServer = process.env.MCP_AUTHORIZATION_SERVER;
+  const mcpAuthServerTokenEndpoint = process.env.MCP_AUTHORIZATION_SERVER_TOKEN_ENDPOINT;
+  const oktaDomain = process.env.OKTA_DOMAIN;
+  const agentId = process.env.AI_AGENT_ID;
+  const privateKeyFile = process.env.AI_AGENT_PRIVATE_KEY_FILE;
+  const privateKeyKid = process.env.AI_AGENT_PRIVATE_KEY_KID;
+  const agentScopes = process.env.AI_AGENT_TODO_MCP_SERVER_SCOPES_TO_REQUEST;
+
+  if (mcpAuthServer && mcpAuthServerTokenEndpoint && oktaDomain && agentId && privateKeyFile && privateKeyKid && agentScopes) {
+    return {
+      mcpAuthorizationServer: mcpAuthServer,
+      mcpAuthorizationServerTokenEndpoint: mcpAuthServerTokenEndpoint,
+      oktaDomain,
+      clientId: agentId,
+      privateKeyFile,
+      privateKeyKid,
+      agentScopes,
+    };
+  }
+  return undefined;
+};
+
 const agentConfig: Omit<AgentConfig, 'idToken' | 'userContext'> = {
   mcpServerUrl: process.env.MCP_SERVER_URL || 'http://localhost:5002/mcp',
   name: 'agent0',
   version: '1.0.0',
+  // Token Exchange
+  tokenExchange: buildTokenExchangeConfig(),
   // Anthropic Direct
   anthropicApiKey: process.env.ANTHROPIC_API_KEY,
   anthropicModel: process.env.ANTHROPIC_MODEL || 'claude-3-5-sonnet-20241022',
@@ -136,9 +165,8 @@ export class Agent {
     );
 
     // Initialize Token Exchange Handler if configured
-    const tokenExchangeConfig = createTokenExchangeConfig();
-    if (tokenExchangeConfig) {
-      this.tokenExchangeHandler = new TokenExchangeHandler(tokenExchangeConfig);
+    if (config.tokenExchange) {
+      this.tokenExchangeHandler = new TokenExchangeHandler(config.tokenExchange);
     }
 
     // Initialize LLM client - Priority: Anthropic Direct > AWS Bedrock

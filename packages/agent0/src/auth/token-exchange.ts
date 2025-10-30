@@ -250,32 +250,3 @@ export class TokenExchangeHandler {
   }
 }
 
-// ============================================================================
-// Configuration Helper
-// ============================================================================
-
-export function createTokenExchangeConfig(): TokenExchangeConfig | null {
-  const mcpAuthorizationServer = process.env.MCP_AUTHORIZATION_SERVER;
-  const mcpAuthorizationServerTokenEndpoint = process.env.MCP_AUTHORIZATION_SERVER_TOKEN_ENDPOINT;
-  const oktaDomain = process.env.OKTA_DOMAIN;
-  const clientId = process.env.AI_AGENT_ID;
-  const privateKeyFile = process.env.AI_AGENT_PRIVATE_KEY_FILE;
-  const privateKeyKid = process.env.AI_AGENT_PRIVATE_KEY_KID;
-  const agentScopes = process.env.AI_AGENT_TODO_MCP_SERVER_SCOPES_TO_REQUEST;
-
-  if (!mcpAuthorizationServer || !mcpAuthorizationServerTokenEndpoint || !clientId || !oktaDomain || !privateKeyFile || !privateKeyKid || !agentScopes) {
-    console.warn('⚠️  Cross-app access not fully configured. Missing required environment variables.');
-    console.warn('   Required: MCP_AUTHORIZATION_SERVER, ID_JAG_TOKEN_ENDPOINT, AI_AGENT_ID, OKTA_DOMAIN, AI_AGENT_PRIVATE_KEY_FILE, AI_AGENT_PRIVATE_KEY_KID, AI_AGENT_TODO_MCP_SERVER_SCOPES_TO_REQUEST');
-    return null;
-  }
-
-  return {
-    oktaDomain,
-    clientId,
-    privateKeyFile,
-    privateKeyKid,
-    mcpAuthorizationServer,
-    mcpAuthorizationServerTokenEndpoint,
-    agentScopes
-  };
-}

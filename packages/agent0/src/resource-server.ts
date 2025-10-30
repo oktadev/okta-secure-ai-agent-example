@@ -4,7 +4,7 @@ import * as path from 'path';
 import cookieParser from 'cookie-parser';
 import { getAgentForSession } from './agent.js';
 import { OktaAuthHelper, OktaConfig, createSessionMiddleware } from './auth/okta-auth.js';
-import { TokenExchangeHandler, createTokenExchangeConfig } from './auth/token-exchange.js';
+import { TokenExchangeHandler, TokenExchangeConfig } from './auth/token-exchange.js';
 
 // ============================================================================
 // Resource Server Configuration
@@ -14,6 +14,7 @@ export interface ResourceServerConfig {
   port: number;
   sessionSecret: string;
   okta?: OktaConfig;
+  tokenExchange?: TokenExchangeConfig;
 }
 
 // ============================================================================
@@ -36,9 +37,8 @@ export class ResourceServer {
     }
 
     // Initialize Token Exchange if configured
-    const tokenExchangeConfig = createTokenExchangeConfig();
-    if (tokenExchangeConfig) {
-      this.tokenExchangeHandler = new TokenExchangeHandler(tokenExchangeConfig);
+    if (this.config.tokenExchange) {
+      this.tokenExchangeHandler = new TokenExchangeHandler(this.config.tokenExchange);
     }
 
     this.setupMiddleware();

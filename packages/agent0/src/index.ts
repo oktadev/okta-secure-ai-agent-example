@@ -3,9 +3,13 @@ import path from 'path';
 import * as dotenv from 'dotenv';
 import { disconnectAll } from './agent.js';
 import { ResourceServer, ResourceServerConfig } from './resource-server.js';
+import { TokenExchangeConfig } from './auth/token-exchange.js';
 
-// Load environment variables
-dotenv.config({ path: path.resolve(__dirname, '../.env') });
+// Load environment variables for resource server (app)
+dotenv.config({ path: path.resolve(__dirname, '../.env.app') });
+
+// Also load agent env for token exchange config (resource server uses TokenExchangeHandler)
+dotenv.config({ path: path.resolve(__dirname, '../.env.agent') });
 
 // ============================================================================
 // Main Bootstrap Function
@@ -33,6 +37,27 @@ async function bootstrap(): Promise<void> {
       clientId: process.env.OKTA_CLIENT_ID,
       clientSecret: process.env.OKTA_CLIENT_SECRET,
       redirectUri: process.env.OKTA_REDIRECT_URI || `http://localhost:${port}/callback`,
+    };
+  }
+
+  // Add Token Exchange configuration if environment variables are set
+  const mcpAuthServer = process.env.MCP_AUTHORIZATION_SERVER;
+  const mcpAuthServerTokenEndpoint = process.env.MCP_AUTHORIZATION_SERVER_TOKEN_ENDPOINT;
+  const oktaDomain = process.env.OKTA_DOMAIN;
+  const agentId = process.env.AI_AGENT_ID;
+  const privateKeyFile = process.env.AI_AGENT_PRIVATE_KEY_FILE;
+  const privateKeyKid = process.env.AI_AGENT_PRIVATE_KEY_KID;
+  const agentScopes = process.env.AI_AGENT_TODO_MCP_SERVER_SCOPES_TO_REQUEST;
+
+  if (mcpAuthServer && mcpAuthServerTokenEndpoint && oktaDomain && agentId && privateKeyFile && privateKeyKid && agentScopes) {
+    resourceServerConfig.tokenExchange = {
+      mcpAuthorizationServer: mcpAuthServer,
+      mcpAuthorizationServerTokenEndpoint: mcpAuthServerTokenEndpoint,
+      oktaDomain,
+      clientId: agentId,
+      privateKeyFile,
+      privateKeyKid,
+      agentScopes,
     };
   }
 
