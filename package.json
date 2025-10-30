@@ -22,15 +22,14 @@
   "description": "This is a TypeScript Node.js monorepo managed with pnpm workspaces.",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "init:prisma": "pnpm --filter todo0 run generate:client && pnpm --filter todo0 run migrate:dev",
+    "build": "pnpm -r run build",
     "start:todo0": "pnpm --filter todo0 run start",
     "start:mcp": "pnpm --filter todo0 run start:mcp",
     "start:agent0": "pnpm --filter agent0 run start",
-    "bootstrap": "pnpm --filter todo0 run generate:client && pnpm --filter todo0 run migrate:dev",
     "bootstrap:okta": "tsx scripts/bootstrap-okta-tenant.ts",
     "validate:okta": "tsx scripts/validate-okta-config.ts",
     "rollback:okta": "tsx scripts/rollback-okta-config.ts",
-    "build": "pnpm -r run build",
     "typecheck:scripts": "tsc --project scripts/tsconfig.json --noEmit"
   },
   "keywords": [],
