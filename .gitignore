@@ -4,6 +4,9 @@ build/
 .env
 .env.local
 .env.backup
+.env.app
+.env.agent
+.env.*.backup
 .DS_Store
 *.log
 coverage/
