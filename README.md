@@ -226,7 +226,7 @@ pnpm approve-builds
 ### 3. Bootstrap prisma client
 
 ```sh
-pnpm boostrap
+pnpm bootstrap
 ```
 
 ### 4. Build
