@@ -8,7 +8,8 @@ import { generateRSAKeyPair, savePrivateKey } from './lib/key-generator.js';
 import {
   generateAgent0AppEnv,
   generateAgent0AgentEnv,
-  generateTodo0Env,
+  generateTodo0AppEnv,
+  generateTodo0McpEnv,
   writeEnvFile,
   writeConfigReport,
   BootstrapConfig,
@@ -460,8 +461,11 @@ async function bootstrap() {
     const agent0AgentEnv = generateAgent0AgentEnv(bootstrapConfig as BootstrapConfig);
     writeEnvFile('packages/agent0/.env.agent', agent0AgentEnv);
 
-    const todo0Env = generateTodo0Env(bootstrapConfig as BootstrapConfig);
-    writeEnvFile('packages/todo0/.env', todo0Env);
+    const todo0AppEnv = generateTodo0AppEnv(bootstrapConfig as BootstrapConfig);
+    writeEnvFile('packages/todo0/.env.app', todo0AppEnv);
+
+    const todo0McpEnv = generateTodo0McpEnv(bootstrapConfig as BootstrapConfig);
+    writeEnvFile('packages/todo0/.env.mcp', todo0McpEnv);
 
     writeConfigReport(bootstrapConfig as BootstrapConfig);
 

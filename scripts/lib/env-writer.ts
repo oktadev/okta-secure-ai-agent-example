@@ -82,9 +82,35 @@ MCP_AUTHORIZATION_SERVER_TOKEN_ENDPOINT=https://${config.oktaDomain}/oauth2/${co
 }
 
 /**
- * Generate .env file for todo0 package
+ * Generate .env.app file for todo0 package (REST API server)
  */
-export function generateTodo0Env(config: BootstrapConfig): string {
+export function generateTodo0AppEnv(config: BootstrapConfig): string {
+  return `# ============================================================================
+# REST API SERVER CONFIGURATION
+# ============================================================================
+PORT=5001
+
+# ============================================================================
+# REST API - OKTA OAUTH (HUMAN SSO)
+# ============================================================================
+OKTA_ISSUER=https://${config.oktaDomain}/oauth2/default
+OKTA_CLIENT_ID=${config.resourceServerClientId}
+OKTA_CLIENT_SECRET=${config.resourceServerClientSecret}
+OKTA_REDIRECT_URI=http://localhost:5001/callback
+EXPECTED_AUDIENCE=api://todo0
+
+# ============================================================================
+# DATABASE CONFIGURATION
+# ============================================================================
+# Database connection configured in prisma/schema.prisma
+# Default: SQLite with file ./dev.db
+`;
+}
+
+/**
+ * Generate .env.mcp file for todo0 package (MCP server)
+ */
+export function generateTodo0McpEnv(config: BootstrapConfig): string {
   return `# ============================================================================
 # MCP SERVER CONFIGURATION
 # ============================================================================
@@ -208,8 +234,10 @@ Agent Identity → MCP AS (/oauth2/${config.mcpAuthServerId}/v1/token)
 
 ## Files Generated
 
-- \`packages/agent0/.env\` - Agent configuration
-- \`packages/todo0/.env\` - Todo0 configuration
+- \`packages/agent0/.env.app\` - Agent0 web UI configuration
+- \`packages/agent0/.env.agent\` - Agent0 agent identity configuration
+- \`packages/todo0/.env.app\` - Todo0 REST API server configuration
+- \`packages/todo0/.env.mcp\` - Todo0 MCP server configuration
 - \`packages/agent0/${config.privateKeyFile}\` - RSA private key (600 permissions)
 - \`okta-config-report.md\` - This report
 
@@ -217,9 +245,10 @@ Agent Identity → MCP AS (/oauth2/${config.mcpAuthServerId}/v1/token)
 
 1. **Install dependencies**: \`pnpm install\`
 2. **Bootstrap database**: \`pnpm run bootstrap\`
-3. **Start MCP Server**: \`pnpm run start:mcp\`
-4. **Start Agent**: \`pnpm run start:agent0\`
-5. **Validate config** (optional): \`pnpm run validate:okta\`
+3. **Start Todo0 REST API**: \`pnpm run start:todo0\`
+4. **Start MCP Server**: \`pnpm run start:mcp\`
+5. **Start Agent**: \`pnpm run start:agent0\`
+6. **Validate config** (optional): \`pnpm run validate:okta\`
 
 ## Important Notes
 

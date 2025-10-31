@@ -367,16 +367,26 @@ async function rollback() {
     console.log('');
 
     if (cleanupAnswers.deleteEnvFiles) {
-      const agent0Env = 'packages/agent0/.env';
-      const todo0Env = 'packages/todo0/.env';
+      const agent0AppEnv = 'packages/agent0/.env.app';
+      const agent0AgentEnv = 'packages/agent0/.env.agent';
+      const todo0AppEnv = 'packages/todo0/.env.app';
+      const todo0McpEnv = 'packages/todo0/.env.mcp';
 
-      if (fs.existsSync(agent0Env)) {
-        fs.unlinkSync(agent0Env);
-        console.log(chalk.gray(`  Deleted: ${agent0Env}`));
+      if (fs.existsSync(agent0AppEnv)) {
+        fs.unlinkSync(agent0AppEnv);
+        console.log(chalk.gray(`  Deleted: ${agent0AppEnv}`));
       }
-      if (fs.existsSync(todo0Env)) {
-        fs.unlinkSync(todo0Env);
-        console.log(chalk.gray(`  Deleted: ${todo0Env}`));
+      if (fs.existsSync(agent0AgentEnv)) {
+        fs.unlinkSync(agent0AgentEnv);
+        console.log(chalk.gray(`  Deleted: ${agent0AgentEnv}`));
+      }
+      if (fs.existsSync(todo0AppEnv)) {
+        fs.unlinkSync(todo0AppEnv);
+        console.log(chalk.gray(`  Deleted: ${todo0AppEnv}`));
+      }
+      if (fs.existsSync(todo0McpEnv)) {
+        fs.unlinkSync(todo0McpEnv);
+        console.log(chalk.gray(`  Deleted: ${todo0McpEnv}`));
       }
     }
 

@@ -146,12 +146,14 @@ async function validateEnvFiles(): Promise<ValidationResult> {
   try {
     const agent0AppEnvPath = 'packages/agent0/.env.app';
     const agent0AgentEnvPath = 'packages/agent0/.env.agent';
-    const todo0EnvPath = 'packages/todo0/.env';
+    const todo0AppEnvPath = 'packages/todo0/.env.app';
+    const todo0McpEnvPath = 'packages/todo0/.env.mcp';
 
     const missing: string[] = [];
     if (!fs.existsSync(agent0AppEnvPath)) missing.push(agent0AppEnvPath);
     if (!fs.existsSync(agent0AgentEnvPath)) missing.push(agent0AgentEnvPath);
-    if (!fs.existsSync(todo0EnvPath)) missing.push(todo0EnvPath);
+    if (!fs.existsSync(todo0AppEnvPath)) missing.push(todo0AppEnvPath);
+    if (!fs.existsSync(todo0McpEnvPath)) missing.push(todo0McpEnvPath);
 
     if (missing.length > 0) {
       return {
@@ -163,10 +165,8 @@ async function validateEnvFiles(): Promise<ValidationResult> {
 
     const agent0AppEnv = loadEnvFile(agent0AppEnvPath);
     const agent0AgentEnv = loadEnvFile(agent0AgentEnvPath);
-    const todo0Env = loadEnvFile(todo0EnvPath);
-
-    // Combine agent0 .env files for validation
-    const agent0Env = { ...agent0AppEnv, ...agent0AgentEnv };
+    const todo0AppEnv = loadEnvFile(todo0AppEnvPath);
+    const todo0McpEnv = loadEnvFile(todo0McpEnvPath);
 
     const requiredAgent0App = [
       'PORT',
@@ -188,7 +188,16 @@ async function validateEnvFiles(): Promise<ValidationResult> {
       'MCP_AUTHORIZATION_SERVER_TOKEN_ENDPOINT',
     ];
 
-    const requiredTodo0 = [
+    const requiredTodo0App = [
+      'PORT',
+      'OKTA_ISSUER',
+      'OKTA_CLIENT_ID',
+      'OKTA_CLIENT_SECRET',
+      'OKTA_REDIRECT_URI',
+      'EXPECTED_AUDIENCE',
+    ];
+
+    const requiredTodo0Mcp = [
       'MCP_PORT',
       'MCP_OKTA_ISSUER',
       'MCP_EXPECTED_AUDIENCE',
@@ -201,8 +210,11 @@ async function validateEnvFiles(): Promise<ValidationResult> {
     requiredAgent0Agent.forEach((key) => {
       if (!agent0AgentEnv[key]) missingVars.push(`agent0 (.env.agent): ${key}`);
     });
-    requiredTodo0.forEach((key) => {
-      if (!todo0Env[key]) missingVars.push(`todo0: ${key}`);
+    requiredTodo0App.forEach((key) => {
+      if (!todo0AppEnv[key]) missingVars.push(`todo0 (.env.app): ${key}`);
+    });
+    requiredTodo0Mcp.forEach((key) => {
+      if (!todo0McpEnv[key]) missingVars.push(`todo0 (.env.mcp): ${key}`);
     });
 
     if (missingVars.length > 0) {
@@ -234,11 +246,11 @@ async function validate() {
 
   // Load environment variables
   let agent0AgentEnv: Record<string, string> = {};
-  let todo0Env: Record<string, string> = {};
+  let todo0McpEnv: Record<string, string> = {};
 
   try {
     agent0AgentEnv = loadEnvFile('packages/agent0/.env.agent');
-    todo0Env = loadEnvFile('packages/todo0/.env');
+    todo0McpEnv = loadEnvFile('packages/todo0/.env.mcp');
   } catch (error: any) {
     console.error(chalk.red('❌ Failed to load environment files:'), error.message);
     console.log(chalk.yellow('\n💡 Run `pnpm run bootstrap:okta` first\n'));
@@ -248,7 +260,7 @@ async function validate() {
   const tests: Array<{ name: string; fn: () => Promise<ValidationResult> }> = [
     { name: 'Environment Files', fn: () => validateEnvFiles() },
     { name: 'Private Key', fn: () => validatePrivateKey(agent0AgentEnv) },
-    { name: 'MCP Auth Server', fn: () => validateMcpAS(todo0Env) },
+    { name: 'MCP Auth Server', fn: () => validateMcpAS(todo0McpEnv) },
   ];
 
   let passedCount = 0;
