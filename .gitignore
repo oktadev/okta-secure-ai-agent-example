@@ -6,6 +6,7 @@ build/
 .env.backup
 .env.app
 .env.agent
+.env.mcp
 .env.*.backup
 .DS_Store
 *.log
