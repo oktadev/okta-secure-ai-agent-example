@@ -19,7 +19,6 @@ interface AppServerConfig {
   oktaClientId: string;
   oktaClientSecret: string;
   oktaRedirectUri: string;
-  expectedAudience: string;
 }
 
 /**
@@ -34,8 +33,7 @@ function validateAppEnv(): AppServerConfig {
     'OKTA_ISSUER',
     'OKTA_CLIENT_ID',
     'OKTA_CLIENT_SECRET',
-    'OKTA_REDIRECT_URI',
-    'EXPECTED_AUDIENCE',
+    'OKTA_REDIRECT_URI'
   ];
 
   for (const varName of requiredVars) {
@@ -78,12 +76,11 @@ function validateAppEnv(): AppServerConfig {
 
   // Return typed configuration object
   return {
-    port: parseInt(process.env.PORT || '5001', 10),
+    port: parseInt(process.env.PORT || '', 10),
     oktaIssuer: process.env.OKTA_ISSUER!,
     oktaClientId: process.env.OKTA_CLIENT_ID!,
     oktaClientSecret: process.env.OKTA_CLIENT_SECRET!,
     oktaRedirectUri: process.env.OKTA_REDIRECT_URI!,
-    expectedAudience: process.env.EXPECTED_AUDIENCE!,
   };
 }
 
@@ -91,11 +88,7 @@ function validateAppEnv(): AppServerConfig {
 const config = validateAppEnv();
 
 // Create configured modules
-const requireAuth = createRequireAuth({
-  oktaIssuer: config.oktaIssuer,
-  oktaClientId: config.oktaClientId,
-  expectedAudience: config.expectedAudience,
-});
+const requireAuth = createRequireAuth();
 
 const authRouter = createAuthRouter({
   oktaIssuer: config.oktaIssuer,
