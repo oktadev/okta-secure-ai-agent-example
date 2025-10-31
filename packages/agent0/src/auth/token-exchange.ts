@@ -14,8 +14,8 @@ export interface TokenExchangeConfig {
   clientId: string;
   privateKeyFile: string;
   privateKeyKid: string;
-  mcpAuthorizationServer: string;
-  mcpAuthorizationServerTokenEndpoint: string;
+  authorizationServer: string;
+  authorizationServerTokenEndpoint: string;
   agentScopes: string;
 }
 
@@ -82,13 +82,13 @@ export class TokenExchangeHandler {
     formData.append('requested_token_type', 'urn:ietf:params:oauth:token-type:id-jag');
     formData.append('subject_token', idToken);
     formData.append('subject_token_type', 'urn:ietf:params:oauth:token-type:id_token');
-    formData.append('audience', this.config.mcpAuthorizationServer);
+    formData.append('audience', this.config.authorizationServer);
     formData.append('scope', this.config.agentScopes);
     formData.append('client_assertion_type', 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer');
     formData.append('client_assertion', clientAssertion);
 
     console.log(`🔄 Step 1: Exchanging ID token for ID-JAG token...`);
-    console.log(`📍 Audience: ${this.config.mcpAuthorizationServer}`);
+    console.log(`📍 Audience: ${this.config.authorizationServer}`);
     console.log(`🆔 Client ID: ${this.config.clientId}`);
 
     const response = await axios.post(
@@ -117,13 +117,13 @@ export class TokenExchangeHandler {
     expires_in: number;
     scope?: string;
   }> {
-    const mcpAuthorizationServer = this.config.mcpAuthorizationServer;
-    const mcpAuthorizationServerTokenEndpoint = this.config.mcpAuthorizationServerTokenEndpoint;
+    const authorizationServer = this.config.authorizationServer;
+    const authorizationServerTokenEndpoint = this.config.authorizationServerTokenEndpoint;
 
     console.log(`🔄 Step 2: Exchanging ID-JAG for Access Token at Resource Server...`);
-    console.log(`📍 MCP authorization server: ${mcpAuthorizationServer}`);
+    console.log(`📍 MCP authorization server: ${authorizationServer}`);
 
-    const clientAssertion = this.createClientAssertion(mcpAuthorizationServerTokenEndpoint);
+    const clientAssertion = this.createClientAssertion(authorizationServerTokenEndpoint);
 
     const resourceTokenForm = new URLSearchParams();
     resourceTokenForm.append('grant_type', 'urn:ietf:params:oauth:grant-type:jwt-bearer');
@@ -132,7 +132,7 @@ export class TokenExchangeHandler {
     resourceTokenForm.append('client_assertion', clientAssertion);
 
     const response = await axios.post(
-      mcpAuthorizationServerTokenEndpoint,
+      authorizationServerTokenEndpoint,
       resourceTokenForm,
       {
         headers: {

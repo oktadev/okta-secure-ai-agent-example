@@ -12,6 +12,141 @@ import * as dotenv from 'dotenv';
 dotenv.config({ path: path.resolve(__dirname, '../.env.agent') });
 
 // ============================================================================
+// Agent LLM Configuration Types
+// ============================================================================
+
+/**
+ * Agent LLM configuration (discriminated union for Anthropic vs Bedrock)
+ */
+type AgentLLMConfig = {
+  mcpServerUrl: string;
+} & (
+  | {
+      llmProvider: 'anthropic';
+      anthropicApiKey: string;
+      anthropicModel: string;
+    }
+  | {
+      llmProvider: 'bedrock';
+      awsRegion: string;
+      awsAccessKeyId: string;
+      awsSecretAccessKey: string;
+      awsSessionToken?: string; // Optional
+      bedrockModelId: string;
+    }
+);
+
+// ============================================================================
+// Environment Validation Function
+// ============================================================================
+
+/**
+ * Validate agent LLM environment variables and return typed configuration
+ */
+function validateAgentLLMEnv(): AgentLLMConfig {
+  const missing: string[] = [];
+  const invalid: string[] = [];
+
+  // Check MCP_SERVER_URL
+  if (!process.env.MCP_SERVER_URL || process.env.MCP_SERVER_URL.trim() === '') {
+    missing.push('MCP_SERVER_URL');
+  } else {
+    try {
+      new URL(process.env.MCP_SERVER_URL);
+    } catch {
+      invalid.push('MCP_SERVER_URL (invalid URL format)');
+    }
+  }
+
+  // Detect which LLM provider is being configured
+  const hasAnthropicKey = process.env.ANTHROPIC_API_KEY && process.env.ANTHROPIC_API_KEY.trim() !== '';
+  const hasBedrockVars = (process.env.AWS_REGION && process.env.AWS_REGION.trim() !== '') ||
+                          (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_ACCESS_KEY_ID.trim() !== '');
+
+  // Error if both providers are configured
+  if (hasAnthropicKey && hasBedrockVars) {
+    console.error('❌ Environment configuration error in .env.agent');
+    console.error('   Cannot configure both Anthropic and AWS Bedrock providers');
+    console.error('   Please choose one LLM provider:');
+    console.error('   - For Anthropic: Set ANTHROPIC_API_KEY and ANTHROPIC_MODEL');
+    console.error('   - For Bedrock: Set AWS_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, BEDROCK_MODEL_ID');
+    process.exit(1);
+  }
+
+  // Error if neither provider is configured
+  if (!hasAnthropicKey && !hasBedrockVars) {
+    console.error('❌ Environment configuration error in .env.agent');
+    console.error('   No LLM provider configured');
+    console.error('   Please configure one LLM provider:');
+    console.error('   - For Anthropic: Set ANTHROPIC_API_KEY and ANTHROPIC_MODEL');
+    console.error('   - For Bedrock: Set AWS_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, BEDROCK_MODEL_ID');
+    process.exit(1);
+  }
+
+  // Validate Anthropic configuration
+  if (hasAnthropicKey) {
+    if (!process.env.ANTHROPIC_MODEL || process.env.ANTHROPIC_MODEL.trim() === '') {
+      missing.push('ANTHROPIC_MODEL');
+    }
+  }
+
+  // Validate Bedrock configuration
+  if (hasBedrockVars) {
+    if (!process.env.AWS_REGION || process.env.AWS_REGION.trim() === '') {
+      missing.push('AWS_REGION');
+    }
+    if (!process.env.AWS_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY_ID.trim() === '') {
+      missing.push('AWS_ACCESS_KEY_ID');
+    }
+    if (!process.env.AWS_SECRET_ACCESS_KEY || process.env.AWS_SECRET_ACCESS_KEY.trim() === '') {
+      missing.push('AWS_SECRET_ACCESS_KEY');
+    }
+    if (!process.env.BEDROCK_MODEL_ID || process.env.BEDROCK_MODEL_ID.trim() === '') {
+      missing.push('BEDROCK_MODEL_ID');
+    }
+    // AWS_SESSION_TOKEN is optional, don't validate
+  }
+
+  // Report errors and exit if validation fails
+  if (missing.length > 0 || invalid.length > 0) {
+    console.error('❌ Environment configuration error in .env.agent');
+    if (missing.length > 0) {
+      console.error('   Missing required variables:', missing.join(', '));
+    }
+    if (invalid.length > 0) {
+      console.error('   Invalid variables:', invalid.join(', '));
+    }
+    console.error('   Check packages/agent0/.env.agent file');
+    process.exit(1);
+  }
+
+  console.log('✅ Agent LLM environment variables validated');
+
+  // Return properly typed discriminated union
+  if (hasAnthropicKey) {
+    return {
+      mcpServerUrl: process.env.MCP_SERVER_URL!,
+      llmProvider: 'anthropic',
+      anthropicApiKey: process.env.ANTHROPIC_API_KEY!,
+      anthropicModel: process.env.ANTHROPIC_MODEL!,
+    };
+  } else {
+    return {
+      mcpServerUrl: process.env.MCP_SERVER_URL!,
+      llmProvider: 'bedrock',
+      awsRegion: process.env.AWS_REGION!,
+      awsAccessKeyId: process.env.AWS_ACCESS_KEY_ID!,
+      awsSecretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
+      awsSessionToken: process.env.AWS_SESSION_TOKEN,
+      bedrockModelId: process.env.BEDROCK_MODEL_ID!,
+    };
+  }
+}
+
+// Validate and get typed LLM configuration
+const llmConfig = validateAgentLLMEnv();
+
+// ============================================================================
 // Agent Configuration
 // ============================================================================
 
@@ -57,8 +192,8 @@ const buildTokenExchangeConfig = (): TokenExchangeConfig | undefined => {
 
   if (mcpAuthServer && mcpAuthServerTokenEndpoint && oktaDomain && agentId && privateKeyFile && privateKeyKid && agentScopes) {
     return {
-      mcpAuthorizationServer: mcpAuthServer,
-      mcpAuthorizationServerTokenEndpoint: mcpAuthServerTokenEndpoint,
+      authorizationServer: mcpAuthServer,
+      authorizationServerTokenEndpoint: mcpAuthServerTokenEndpoint,
       oktaDomain,
       clientId: agentId,
       privateKeyFile,
@@ -69,23 +204,29 @@ const buildTokenExchangeConfig = (): TokenExchangeConfig | undefined => {
   return undefined;
 };
 
-const agentConfig: Omit<AgentConfig, 'idToken' | 'userContext'> = {
-  mcpServerUrl: process.env.MCP_SERVER_URL || 'http://localhost:5002/mcp',
-  name: 'agent0',
-  version: '1.0.0',
-  // Token Exchange
-  tokenExchange: buildTokenExchangeConfig(),
-  // Anthropic Direct
-  anthropicApiKey: process.env.ANTHROPIC_API_KEY,
-  anthropicModel: process.env.ANTHROPIC_MODEL || 'claude-3-5-sonnet-20241022',
-  // AWS Bedrock
-  awsRegion: process.env.AWS_REGION,
-  awsAccessKeyId: process.env.AWS_ACCESS_KEY_ID,
-  awsSecretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-  awsSessionToken: process.env.AWS_SESSION_TOKEN,
-  bedrockModelId: process.env.BEDROCK_MODEL_ID || 'us.anthropic.claude-3-5-sonnet-20241022-v2:0',
-  enableLLM: true,
-};
+// Build agentConfig using validated LLM configuration
+const agentConfig: Omit<AgentConfig, 'idToken' | 'userContext'> = llmConfig.llmProvider === 'anthropic'
+  ? {
+      mcpServerUrl: llmConfig.mcpServerUrl,
+      name: 'agent0',
+      version: '1.0.0',
+      tokenExchange: buildTokenExchangeConfig(),
+      anthropicApiKey: llmConfig.anthropicApiKey,
+      anthropicModel: llmConfig.anthropicModel,
+      enableLLM: true,
+    }
+  : {
+      mcpServerUrl: llmConfig.mcpServerUrl,
+      name: 'agent0',
+      version: '1.0.0',
+      tokenExchange: buildTokenExchangeConfig(),
+      awsRegion: llmConfig.awsRegion,
+      awsAccessKeyId: llmConfig.awsAccessKeyId,
+      awsSecretAccessKey: llmConfig.awsSecretAccessKey,
+      awsSessionToken: llmConfig.awsSessionToken,
+      bedrockModelId: llmConfig.bedrockModelId,
+      enableLLM: true,
+    };
 
 export function getAgentForUserContext(idToken: string, userContext: UserContext): Agent {
   return new Agent({
