@@ -4,7 +4,7 @@ const prisma = new PrismaClient();
 
 /**
  * Shared business logic for todo operations.
- * Used by both REST API routes and MCP server tools to avoid token passthrough anti-pattern.
+ * Used by both todo0 app routes and MCP server tools to avoid token passthrough anti-pattern.
  */
 export class TodoService {
   /**
