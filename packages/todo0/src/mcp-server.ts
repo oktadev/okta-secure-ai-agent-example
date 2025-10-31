@@ -11,10 +11,10 @@ import { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol';
 import { isInitializeRequest, ServerNotification, ServerRequest } from '@modelcontextprotocol/sdk/types.js';
 
 import { todoService } from './services/todo-service';
-import { requireMcpAuth, McpAuthClaims, verifyAccessTokenWithScopes} from './middleware/requireMcpAuth';
+import { createRequireMcpAuth, McpAuthClaims } from './middleware/requireMcpAuth';
 
-// Load environment variables
-dotenv.config({ path: path.resolve(__dirname, '../.env') });
+// Load environment variables from .env.mcp
+dotenv.config({ path: path.resolve(__dirname, '../.env.mcp') });
 
 // ============================================================================
 // Create MCP Server
@@ -39,199 +39,279 @@ const deleteTodoParams: z.ZodRawShape = {
   id: z.number().describe('The ID of the todo to delete'),
 };
 
-const makeProtectedTool = (scopes: string[], cb: (params: any, extra: RequestHandlerExtra<ServerRequest, ServerNotification>) => Promise<any>): ((args: any, extra: RequestHandlerExtra<ServerRequest, ServerNotification>) => Promise<any>) => {
-    return async (params: any, extra: RequestHandlerExtra<ServerRequest, ServerNotification>) => {
-      if (!extra.requestInfo?.headers.authorization) {
-        throw new Error('Missing Authorization header in tool callback');
-      }
-      if (Array.isArray(extra.requestInfo?.headers.authorization)) {
-        throw new Error('Unexpected Authorization header in tool callback');
-      }
-      const authorizationHeader = extra.requestInfo?.headers.authorization;
+// ============================================================================
+// Tool Registration Function
+// ============================================================================
 
-      console.log('🔍 Verifying access token for tool execution...');
-      const isValidToken = await verifyAccessTokenWithScopes(authorizationHeader, scopes);
-      if (!isValidToken) {
+/**
+ * Register MCP tools with scope-based authorization
+ */
+function registerTools(verifyAccessTokenWithScopes: (authHeader: string, scopes: string[]) => Promise<boolean>): void {
+  const makeProtectedTool = (scopes: string[], cb: (params: any, extra: RequestHandlerExtra<ServerRequest, ServerNotification>) => Promise<any>): ((args: any, extra: RequestHandlerExtra<ServerRequest, ServerNotification>) => Promise<any>) => {
+      return async (params: any, extra: RequestHandlerExtra<ServerRequest, ServerNotification>) => {
+        if (!extra.requestInfo?.headers.authorization) {
+          throw new Error('Missing Authorization header in tool callback');
+        }
+        if (Array.isArray(extra.requestInfo?.headers.authorization)) {
+          throw new Error('Unexpected Authorization header in tool callback');
+        }
+        const authorizationHeader = extra.requestInfo?.headers.authorization;
+
+        console.log('🔍 Verifying access token for tool execution...');
+        const isValidToken = await verifyAccessTokenWithScopes(authorizationHeader, scopes);
+        if (!isValidToken) {
+          return {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({
+                error: 'Unauthorized',
+                message: 'Invalid or expired token'
+              })
+            }],
+            isError: true,
+          };
+        }
+
+        try {
+          return await cb(params, extra);
+        } catch (error) {
+          return {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({
+                error: 'Internal Server Error',
+                message: error instanceof Error ? error.message : 'Unknown error'
+              })
+            }],
+            isError: true,
+          };
+        }
+
+      }
+  }
+
+  // ============================================================================
+  // Tool 1: Create Todo
+  // ============================================================================
+  // Note: JWT authentication is enforced at the transport layer (/mcp endpoint).
+  // All connections to this server are authenticated before tool execution.
+  // Tools are further authorized via scope checks in makeProtectedTool.
+  server.tool(
+    'create-todo',
+    'Create a new todo item.',
+    createTodoParams,
+    makeProtectedTool(
+      [
+        'mcp:tools:manage'
+      ],
+      async ({ title }) => {
+        const todo = await todoService.createTodo(title);
+
         return {
           content: [{
             type: 'text',
             text: JSON.stringify({
-              error: 'Unauthorized',
-              message: 'Invalid or expired token'
+              success: true,
+              todo,
+              message: 'Todo created successfully'
             })
           }],
-          isError: true,
         };
       }
+    )
+  );
 
-      try {
-        return await cb(params, extra);
-      } catch (error) {
+  // ============================================================================
+  // Tool 2: Get Todos
+  // ============================================================================
+
+  server.tool(
+    'get-todos',
+    'List all todos.',
+    emptyParams,
+    makeProtectedTool(
+      [
+        'mcp:tools:read'
+      ],
+      async () => {
+        const todos = await todoService.getAllTodos();
+
         return {
           content: [{
             type: 'text',
             text: JSON.stringify({
-              error: 'Internal Server Error',
-              message: error instanceof Error ? error.message : 'Unknown error'
+              success: true,
+              todos,
+              count: todos.length,
+              message: 'Retrieved all todos'
             })
           }],
-          isError: true,
         };
       }
-      
-    }
+    )
+  );
+
+  // ============================================================================
+  // Tool 3: Toggle Todo Completed Status
+  // ============================================================================
+
+  server.tool(
+    'toggle-todo',
+    'Toggle the completed status of a todo.',
+    toggleTodoParams,
+    makeProtectedTool(
+      [
+        'mcp:tools:manage'
+      ],
+      async ({ id }) => {
+        const todo = await todoService.toggleTodo(id);
+
+        if (!todo) {
+          return {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({
+                error: 'Not Found',
+                message: 'Todo not found'
+              })
+            }],
+            isError: true,
+          };
+        }
+
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              success: true,
+              todo,
+              message: 'Todo completion status toggled'
+            })
+          }],
+        };
+      }
+    )
+  );
+
+  // ============================================================================
+  // Tool 4: Delete Todo
+  // ============================================================================
+
+  server.tool(
+    'delete-todo',
+    'Delete a todo by ID.',
+    deleteTodoParams,
+    makeProtectedTool(
+      [
+        'mcp:tools:manage'
+      ],
+      async ({ id }) => {
+        const deleted = await todoService.deleteTodo(id);
+
+        if (!deleted) {
+          return {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({
+                error: 'Not Found',
+                message: 'Todo not found or already deleted'
+              })
+            }],
+            isError: true,
+          };
+        }
+
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              success: true,
+              message: 'Todo deleted successfully'
+            })
+          }],
+        };
+      }
+    )
+  );
 }
-
-// ============================================================================
-// Tool 1: Create Todo
-// ============================================================================
-// Note: JWT authentication is enforced at the transport layer (/mcp endpoint).
-// All connections to this server are authenticated before tool execution.
-// Tools are further authorized via scope checks in makeProtectedTool. 
-server.tool(
-  'create-todo',
-  'Create a new todo item.',
-  createTodoParams,
-  makeProtectedTool(
-    [
-      'mcp:tools:manage'
-    ],
-    async ({ title }) => {
-      const todo = await todoService.createTodo(title);
-
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            success: true,
-            todo,
-            message: 'Todo created successfully'
-          })
-        }],
-      };
-    }
-  )
-);
-
-// ============================================================================
-// Tool 2: Get Todos
-// ============================================================================
-
-server.tool(
-  'get-todos',
-  'List all todos.',
-  emptyParams,
-  makeProtectedTool(
-    [
-      'mcp:tools:read'
-    ],
-    async () => {
-      const todos = await todoService.getAllTodos();
-
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            success: true,
-            todos,
-            count: todos.length,
-            message: 'Retrieved all todos'
-          })
-        }],
-      };
-    }
-  )
-);
-
-// ============================================================================
-// Tool 3: Toggle Todo Completed Status
-// ============================================================================
-
-server.tool(
-  'toggle-todo',
-  'Toggle the completed status of a todo.',
-  toggleTodoParams,
-  makeProtectedTool(
-    [
-      'mcp:tools:manage'
-    ],
-    async ({ id }) => {
-      const todo = await todoService.toggleTodo(id);
-
-      if (!todo) {
-        return {
-          content: [{
-            type: 'text',
-            text: JSON.stringify({
-              error: 'Not Found',
-              message: 'Todo not found'
-            })
-          }],
-          isError: true,
-        };
-      }
-
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            success: true,
-            todo,
-            message: 'Todo completion status toggled'
-          })
-        }],
-      };
-    }
-  )
-);
-
-// ============================================================================
-// Tool 4: Delete Todo
-// ============================================================================
-
-server.tool(
-  'delete-todo',
-  'Delete a todo by ID.',
-  deleteTodoParams,
-  makeProtectedTool(
-    [
-      'mcp:tools:manage'
-    ],
-    async ({ id }) => {
-      const deleted = await todoService.deleteTodo(id);
-
-      if (!deleted) {
-        return {
-          content: [{
-            type: 'text',
-            text: JSON.stringify({
-              error: 'Not Found',
-              message: 'Todo not found or already deleted'
-            })
-          }],
-          isError: true,
-        };
-      }
-
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            success: true,
-            message: 'Todo deleted successfully'
-          })
-        }],
-      };
-    }
-  )
-);
 
 // ============================================================================
 // Express Server Setup with StreamableHTTP
 // ============================================================================
 
+/**
+ * Configuration interface for MCP server
+ */
+interface McpServerConfig {
+  mcpPort: number;
+  mcpOktaIssuer: string;
+  mcpExpectedAudience: string;
+}
+
+/**
+ * Validate required environment variables and return typed configuration
+ */
+function validateMcpEnv(): McpServerConfig {
+  const missing: string[] = [];
+  const invalid: string[] = [];
+
+  // Check required variables
+  const requiredVars = [
+    'MCP_OKTA_ISSUER',
+    'MCP_EXPECTED_AUDIENCE',
+  ];
+
+  for (const varName of requiredVars) {
+    if (!process.env[varName] || process.env[varName]!.trim() === '') {
+      missing.push(varName);
+    }
+  }
+
+  // Validate URL format for issuer
+  if (process.env.MCP_OKTA_ISSUER) {
+    try {
+      new URL(process.env.MCP_OKTA_ISSUER);
+    } catch {
+      invalid.push('MCP_OKTA_ISSUER (invalid URL format)');
+    }
+  }
+
+  // Report errors and exit if validation fails
+  if (missing.length > 0 || invalid.length > 0) {
+    console.error('❌ Environment configuration error in .env.mcp');
+    if (missing.length > 0) {
+      console.error('   Missing required variables:', missing.join(', '));
+    }
+    if (invalid.length > 0) {
+      console.error('   Invalid variables:', invalid.join(', '));
+    }
+    console.error('   Check packages/todo0/.env.mcp file');
+    process.exit(1);
+  }
+
+  console.log('✅ MCP server environment variables validated');
+
+  // Return typed configuration object
+  return {
+    mcpPort: parseInt(process.env.MCP_PORT || '5002', 10),
+    mcpOktaIssuer: process.env.MCP_OKTA_ISSUER!,
+    mcpExpectedAudience: process.env.MCP_EXPECTED_AUDIENCE!,
+  };
+}
+
 async function bootstrap(): Promise<void> {
-  const MCP_PORT = process.env.MCP_PORT || 5002;
+  // Validate environment and get typed configuration
+  const config = validateMcpEnv();
+
+  // Create configured MCP auth middleware with validated config
+  const { requireMcpAuth, verifyAccessTokenWithScopes } = createRequireMcpAuth({
+    mcpOktaIssuer: config.mcpOktaIssuer,
+    mcpExpectedAudience: config.mcpExpectedAudience,
+  });
+
+  // Register tools with validated auth
+  registerTools(verifyAccessTokenWithScopes);
+
   const app = express();
 
   // Map to store transports by session ID
@@ -241,16 +321,16 @@ async function bootstrap(): Promise<void> {
 
   app.use(express.json());
 
-  const mcpAuthMetadata = await fetch(`${process.env.MCP_OKTA_ISSUER}/.well-known/oauth-authorization-server`).then(res => res.json());
+  const mcpAuthMetadata = await fetch(`${config.mcpOktaIssuer}/.well-known/oauth-authorization-server`).then(res => res.json());
 
   console.log('MCP Auth Metadata:', mcpAuthMetadata);
-  
+
   /**
    * MCP Protected Resource Metadata Endpoint
    */
   app.use(mcpAuthMetadataRouter({
     oauthMetadata: mcpAuthMetadata,
-    resourceServerUrl: new URL(`http://localhost:${MCP_PORT}/mcp`)
+    resourceServerUrl: new URL(`http://localhost:${config.mcpPort}/mcp`)
   }));
 
   // MCP POST endpoint - handles initialization and subsequent requests
@@ -406,23 +486,23 @@ async function bootstrap(): Promise<void> {
     }
   });
 
-  app.listen(MCP_PORT, () => {
+  app.listen(config.mcpPort, () => {
     console.log('='.repeat(60));
     console.log('🚀 MCP Todo Server (StreamableHTTP)');
     console.log('='.repeat(60));
-    console.log(`✓ Server running on http://localhost:${MCP_PORT}`);
-    console.log(`✓ MCP endpoint: http://localhost:${MCP_PORT}/mcp [SECURED]`);
+    console.log(`✓ Server running on http://localhost:${config.mcpPort}`);
+    console.log(`✓ MCP endpoint: http://localhost:${config.mcpPort}/mcp [SECURED]`);
     console.log(`  - POST: Initialize/Send messages`);
     console.log(`  - GET:  SSE stream (server→client)`);
     console.log(`  - DELETE: Terminate session`);
-    console.log(`✓ MCP protected resource metadata: ${getOAuthProtectedResourceMetadataUrl(new URL(`http://localhost:${MCP_PORT}/mcp`))}`);
+    console.log(`✓ MCP protected resource metadata: ${getOAuthProtectedResourceMetadataUrl(new URL(`http://localhost:${config.mcpPort}/mcp`))}`);
     console.log('='.repeat(60));
     console.log('Configuration:');
     console.log(`  - Transport: StreamableHTTP (no SSE-only mode)`);
-    console.log(`  - MCP Server Port: ${MCP_PORT}`);
+    console.log(`  - MCP Server Port: ${config.mcpPort}`);
     console.log(`  - Data Access: Direct Prisma operations (shared service)`);
     console.log(`  - Auth: JWT verification with MCP-specific audience`);
-    console.log(`  - Expected Audience: ${process.env.MCP_EXPECTED_AUDIENCE}`);
+    console.log(`  - Expected Audience: ${config.mcpExpectedAudience}`);
     console.log('='.repeat(60));
     console.log('Available Tools:');
     console.log('  1. create-todo  - Create a new todo');

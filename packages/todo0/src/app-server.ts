@@ -3,11 +3,108 @@ import path from 'path';
 import bodyParser from 'body-parser';
 import session from 'express-session';
 import * as dotenv from 'dotenv';
-import todosRouter from './routes/todos';
-import authRouter from './routes/auth';
+import { createRequireAuth } from './middleware/requireAuth';
+import { createAuthRouter } from './routes/auth';
+import { createTodosRouter } from './routes/todos';
 
-// Load environment variables
-dotenv.config({ path: path.resolve(__dirname, '../.env') });
+// Load environment variables from .env.app
+dotenv.config({ path: path.resolve(__dirname, '../.env.app') });
+
+/**
+ * Configuration interface for app server
+ */
+interface AppServerConfig {
+  port: number;
+  oktaIssuer: string;
+  oktaClientId: string;
+  oktaClientSecret: string;
+  oktaRedirectUri: string;
+  expectedAudience: string;
+}
+
+/**
+ * Validate required environment variables and return typed configuration
+ */
+function validateAppEnv(): AppServerConfig {
+  const missing: string[] = [];
+  const invalid: string[] = [];
+
+  // Check required variables
+  const requiredVars = [
+    'OKTA_ISSUER',
+    'OKTA_CLIENT_ID',
+    'OKTA_CLIENT_SECRET',
+    'OKTA_REDIRECT_URI',
+    'EXPECTED_AUDIENCE',
+  ];
+
+  for (const varName of requiredVars) {
+    if (!process.env[varName] || process.env[varName]!.trim() === '') {
+      missing.push(varName);
+    }
+  }
+
+  // Validate URL formats
+  if (process.env.OKTA_ISSUER) {
+    try {
+      new URL(process.env.OKTA_ISSUER);
+    } catch {
+      invalid.push('OKTA_ISSUER (invalid URL format)');
+    }
+  }
+
+  if (process.env.OKTA_REDIRECT_URI) {
+    try {
+      new URL(process.env.OKTA_REDIRECT_URI);
+    } catch {
+      invalid.push('OKTA_REDIRECT_URI (invalid URL format)');
+    }
+  }
+
+  // Report errors and exit if validation fails
+  if (missing.length > 0 || invalid.length > 0) {
+    console.error('❌ Environment configuration error in .env.app');
+    if (missing.length > 0) {
+      console.error('   Missing required variables:', missing.join(', '));
+    }
+    if (invalid.length > 0) {
+      console.error('   Invalid variables:', invalid.join(', '));
+    }
+    console.error('   Check packages/todo0/.env.app file');
+    process.exit(1);
+  }
+
+  console.log('✅ App server environment variables validated');
+
+  // Return typed configuration object
+  return {
+    port: parseInt(process.env.PORT || '5001', 10),
+    oktaIssuer: process.env.OKTA_ISSUER!,
+    oktaClientId: process.env.OKTA_CLIENT_ID!,
+    oktaClientSecret: process.env.OKTA_CLIENT_SECRET!,
+    oktaRedirectUri: process.env.OKTA_REDIRECT_URI!,
+    expectedAudience: process.env.EXPECTED_AUDIENCE!,
+  };
+}
+
+// Validate environment and get typed configuration
+const config = validateAppEnv();
+
+// Create configured modules
+const requireAuth = createRequireAuth({
+  oktaIssuer: config.oktaIssuer,
+  oktaClientId: config.oktaClientId,
+  expectedAudience: config.expectedAudience,
+});
+
+const authRouter = createAuthRouter({
+  oktaIssuer: config.oktaIssuer,
+  oktaClientId: config.oktaClientId,
+  oktaClientSecret: config.oktaClientSecret,
+  oktaRedirectUri: config.oktaRedirectUri,
+});
+
+const todosRouter = createTodosRouter(requireAuth);
 
 declare module 'express-session' {
   interface SessionData {
@@ -59,8 +156,7 @@ app.use((req, res) => {
   res.status(404).send(`404 Not Found: ${req.method} ${req.url}`);
 });
 
-const PORT = process.env.PORT || 5001;
-app.listen(PORT, () => {
-  console.log(`[SERVER] Express server running on http://localhost:${PORT}`);
+app.listen(config.port, () => {
+  console.log(`[SERVER] Express server running on http://localhost:${config.port}`);
   console.log(`[SERVER] Auth routes: /login, /callback, /logout`);
 });

@@ -1,29 +1,30 @@
 import { Router } from 'express';
 import { OktaAuth } from '@okta/okta-auth-js';
-import * as dotenv from 'dotenv'; 
 
-// Load environment variables
-dotenv.config();
+export interface AuthConfig {
+  oktaIssuer: string;
+  oktaClientId: string;
+  oktaClientSecret: string;
+  oktaRedirectUri: string;
+}
 
-const OKTA_ISSUER = process.env.OKTA_ISSUER ?? '{yourIssuerUrl}';
-const OKTA_CLIENT_ID = process.env.OKTA_CLIENT_ID ?? '{yourClientId}';
-const OKTA_CLIENT_SECRET = process.env.OKTA_CLIENT_SECRET ?? '{yourClientSecret}';
-const OKTA_REDIRECT_URI = process.env.OKTA_REDIRECT_URI ?? '{yourRedirectUri}';
+export function createAuthRouter(config: AuthConfig): Router {
+  const { oktaIssuer, oktaClientId, oktaClientSecret, oktaRedirectUri } = config;
 
-console.log('🔐 Okta Auth Configuration:');
-console.log(`   Issuer: ${OKTA_ISSUER}`);
-console.log(`   Client ID: ${OKTA_CLIENT_ID}`);
-console.log(`   Redirect URI: ${OKTA_REDIRECT_URI}`);
+  console.log('🔐 Okta Auth Configuration:');
+  console.log(`   Issuer: ${oktaIssuer}`);
+  console.log(`   Client ID: ${oktaClientId}`);
+  console.log(`   Redirect URI: ${oktaRedirectUri}`);
 
-// Initialize OktaAuth for server-side use
-const oktaAuth = new OktaAuth({
-  issuer: OKTA_ISSUER,
-  clientId: OKTA_CLIENT_ID,
-  clientSecret: OKTA_CLIENT_SECRET,
-  redirectUri: OKTA_REDIRECT_URI,
-});
+  // Initialize OktaAuth for server-side use
+  const oktaAuth = new OktaAuth({
+    issuer: oktaIssuer,
+    clientId: oktaClientId,
+    clientSecret: oktaClientSecret,
+    redirectUri: oktaRedirectUri,
+  });
 
-const router = Router();
+  const router = Router();
 
 router.get('/login', async (req, res) => {
   console.log('[AUTH] Login endpoint hit');
@@ -40,12 +41,12 @@ router.get('/login', async (req, res) => {
     // Build authorization URL with PKCE
     const state = Math.random().toString(36).substring(7);
     req.session.state = state;
-    
-    const authUrl = `${OKTA_ISSUER}/v1/authorize?` +
-      `client_id=${OKTA_CLIENT_ID}` +
+
+    const authUrl = `${oktaIssuer}/v1/authorize?` +
+      `client_id=${oktaClientId}` +
       `&response_type=code` +
       `&scope=${encodeURIComponent('openid profile email')}` +
-      `&redirect_uri=${encodeURIComponent(OKTA_REDIRECT_URI)}` +
+      `&redirect_uri=${encodeURIComponent(oktaRedirectUri)}` +
       `&state=${state}` +
       `&code_challenge=${codeChallenge}` +
       `&code_challenge_method=S256`;
@@ -130,13 +131,14 @@ router.post('/logout', async (req, res) => {
     console.log('[AUTH] Session destroyed');
     
     // Use Okta's proper logout endpoint with id_token_hint
-    const oktaLogoutUrl = `${OKTA_ISSUER}/v1/logout?` +
+    const oktaLogoutUrl = `${oktaIssuer}/v1/logout?` +
       `id_token_hint=${idToken || ''}` +
       `&post_logout_redirect_uri=${encodeURIComponent('http://localhost:5001/')}`;
-    
+
     console.log('[AUTH] Redirecting to Okta logout:', oktaLogoutUrl);
     res.redirect(oktaLogoutUrl);
   });
 });
 
-export default router;
+  return router;
+}

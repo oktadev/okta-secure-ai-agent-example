@@ -1,8 +1,8 @@
-import { Router } from 'express';
-import { requireAuth } from '../middleware/requireAuth';
+import { Router, RequestHandler } from 'express';
 import { todoService } from '../services/todo-service';
 
-const router = Router();
+export function createTodosRouter(requireAuth: RequestHandler): Router {
+  const router = Router();
 
 router.get('/', async (req, res) => {
   const authenticated = req.session && req.session.access_token;
@@ -81,4 +81,5 @@ router.post('/todos/:id/delete', requireAuth, async (req, res) => {
   }
 });
 
-export default router;
+  return router;
+}

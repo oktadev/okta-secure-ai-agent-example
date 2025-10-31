@@ -1,38 +1,30 @@
 import { Request, Response, NextFunction } from 'express';
 import OktaJwtVerifier from '@okta/jwt-verifier';
-import * as dotenv from 'dotenv';
 
-// Load environment variables
-dotenv.config();
-
-// Use MCP-specific environment variables for configuration
-// These should be distinct from the REST API configuration
-const MCP_OKTA_ISSUER = process.env.MCP_OKTA_ISSUER ?? '{yourIssuerUrl}';
-const MCP_EXPECTED_AUDIENCE = process.env.MCP_EXPECTED_AUDIENCE ?? 'mcp://default';
-
-console.log('🔐 MCP Auth Middleware Configuration:');
-console.log(`   Issuer: ${MCP_OKTA_ISSUER}`);
-console.log(`   Expected Audience: ${MCP_EXPECTED_AUDIENCE}`);
-
-const oktaJwtVerifier = new OktaJwtVerifier({
-  issuer: MCP_OKTA_ISSUER,
-  assertClaims: {
-    aud: MCP_EXPECTED_AUDIENCE,
-  },
-});
-
-export interface McpAuthClaims {
-  sub: string;
-  scp?: string[];
-  cid?: string;
-  [key: string]: any;
+export interface McpAuthConfig {
+  mcpOktaIssuer: string;
+  mcpExpectedAudience: string;
 }
 
-/**
- * Middleware to verify JWT tokens for MCP server connections.
- * Extracts Bearer token from Authorization header and validates it.
- */
-export async function requireMcpAuth(req: Request, res: Response, next: NextFunction) {
+export function createRequireMcpAuth(config: McpAuthConfig) {
+  const { mcpOktaIssuer, mcpExpectedAudience } = config;
+
+  console.log('🔐 MCP Auth Middleware Configuration:');
+  console.log(`   Issuer: ${mcpOktaIssuer}`);
+  console.log(`   Expected Audience: ${mcpExpectedAudience}`);
+
+  const oktaJwtVerifier = new OktaJwtVerifier({
+    issuer: mcpOktaIssuer,
+    assertClaims: {
+      aud: mcpExpectedAudience,
+    },
+  });
+
+  /**
+   * Middleware to verify JWT tokens for MCP server connections.
+   * Extracts Bearer token from Authorization header and validates it.
+   */
+  async function requireMcpAuth(req: Request, res: Response, next: NextFunction) {
   // Check for Bearer token authentication
   const authHeader = req.headers.authorization || '';
   const match = authHeader.match(/^Bearer (.+)$/);
@@ -50,7 +42,7 @@ export async function requireMcpAuth(req: Request, res: Response, next: NextFunc
 
   try {
     // Verify the access token
-    const jwt = await oktaJwtVerifier.verifyAccessToken(accessToken, MCP_EXPECTED_AUDIENCE);
+    const jwt = await oktaJwtVerifier.verifyAccessToken(accessToken, mcpExpectedAudience);
 
     console.log('✅ MCP token verified successfully');
     console.log('   Subject:', jwt.claims.sub);
@@ -76,6 +68,30 @@ export async function requireMcpAuth(req: Request, res: Response, next: NextFunc
       details: err.message
     });
   }
+  }
+
+  async function verifyAccessTokenWithScopes(authorizationHeader: string, expectedScopes: string[]): Promise<boolean> {
+    console.log('🔍 Verifying MCP access token with scopes:', expectedScopes);
+
+    const match = authorizationHeader.match(/^Bearer (.+)$/);
+
+    if (!match) {
+      console.log('✗ No Bearer token found in Authorization header for MCP connection');
+      return false;
+    }
+
+    const accessToken = match[1];
+    console.log('🔍 Verifying MCP access token...');
+
+    const jwt = await oktaJwtVerifier.verifyAccessToken(
+      accessToken,
+      mcpExpectedAudience
+    );
+
+    return verifyScopesClaim(jwt.claims, expectedScopes);
+  }
+
+  return { requireMcpAuth, verifyAccessTokenWithScopes };
 }
 
 function verifyScopesClaim(claims: OktaJwtVerifier.JwtClaims, expectedScopes: string[]): boolean {
@@ -92,25 +108,11 @@ function verifyScopesClaim(claims: OktaJwtVerifier.JwtClaims, expectedScopes: st
   }
 }
 
-export async function verifyAccessTokenWithScopes(authorizationHeader: string, expectedScopes: string[]): Promise<boolean> {
-  console.log('🔍 Verifying MCP access token with scopes:', expectedScopes);
-
-  const match = authorizationHeader.match(/^Bearer (.+)$/);
-
-  if (!match) {
-    console.log('✗ No Bearer token found in Authorization header for MCP connection');
-    return false;
-  }
-
-  const accessToken = match[1];
-  console.log('🔍 Verifying MCP access token...');
-
-  const jwt = await oktaJwtVerifier.verifyAccessToken(
-    accessToken, 
-    MCP_EXPECTED_AUDIENCE
-  );
-
-  return verifyScopesClaim(jwt.claims, expectedScopes);
+export interface McpAuthClaims {
+  sub: string;
+  scp?: string[];
+  cid?: string;
+  [key: string]: any;
 }
 
 declare global {
