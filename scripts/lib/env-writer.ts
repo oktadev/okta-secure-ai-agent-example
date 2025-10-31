@@ -5,9 +5,12 @@ export interface BootstrapConfig {
   oktaDomain: string;
 
   // Applications
-  resourceServerClientId: string;
-  resourceServerClientSecret: string;
+  agentAppClientId: string;
+  agentAppClientSecret: string;
   agentIdentityClientId: string;
+
+  todo0AppClientId: string;
+  todo0AppClientSecret: string;
 
   // Keys
   privateKeyFile: string;
@@ -33,8 +36,8 @@ SESSION_SECRET=default-secret-change-in-production
 # RESOURCE SERVER - OKTA OAUTH (HUMAN SSO)
 # ============================================================================
 OKTA_DOMAIN=${config.oktaDomain}
-OKTA_CLIENT_ID=${config.resourceServerClientId}
-OKTA_CLIENT_SECRET=${config.resourceServerClientSecret}
+OKTA_CLIENT_ID=${config.agentAppClientId}
+OKTA_CLIENT_SECRET=${config.agentAppClientSecret}
 OKTA_REDIRECT_URI=http://localhost:3000/callback
 
 `;
@@ -82,22 +85,21 @@ MCP_AUTHORIZATION_SERVER_TOKEN_ENDPOINT=https://${config.oktaDomain}/oauth2/${co
 }
 
 /**
- * Generate .env.app file for todo0 package (REST API server)
+ * Generate .env.app file for todo0 package (App server)
  */
 export function generateTodo0AppEnv(config: BootstrapConfig): string {
   return `# ============================================================================
-# REST API SERVER CONFIGURATION
+# APP SERVER CONFIGURATION
 # ============================================================================
 PORT=5001
 
 # ============================================================================
-# REST API - OKTA OAUTH (HUMAN SSO)
+# APP SERVER - OKTA OAUTH (HUMAN SSO)
 # ============================================================================
 OKTA_ISSUER=https://${config.oktaDomain}/oauth2/default
-OKTA_CLIENT_ID=${config.resourceServerClientId}
-OKTA_CLIENT_SECRET=${config.resourceServerClientSecret}
+OKTA_CLIENT_ID=${config.todo0AppClientId}
+OKTA_CLIENT_SECRET=${config.todo0AppClientSecret}
 OKTA_REDIRECT_URI=http://localhost:5001/callback
-EXPECTED_AUDIENCE=api://todo0
 
 # ============================================================================
 # DATABASE CONFIGURATION
@@ -182,13 +184,13 @@ Generated: ${new Date().toISOString()}
 ## Applications
 
 ### Resource Server (OIDC Client)
-- **Client ID**: \`${config.resourceServerClientId}\`
+- **Client ID**: \`${config.agentAppClientId}\`
 - **Type**: Web Application
 - **Grant Types**: Authorization Code with PKCE
 - **Redirect URI**: http://localhost:3000/callback
 - **Purpose**: Human user authentication for web UI
 
-### Agent Identity (Service Account)
+### Agent Identity (MCP Client)
 - **Client ID**: \`${config.agentIdentityClientId}\`
 - **Type**: Service (Native with Private Key JWT)
 - **Grant Types**:

@@ -166,8 +166,8 @@ async function bootstrap() {
       },
     }) as OpenIdConnectApplication;
 
-    bootstrapConfig.resourceServerClientId = agent0App.credentials.oauthClient!.client_id!;
-    bootstrapConfig.resourceServerClientSecret = agent0App.credentials.oauthClient!.client_secret!;
+    bootstrapConfig.agentAppClientId = agent0App.credentials.oauthClient!.client_id!;
+    bootstrapConfig.agentAppClientSecret = agent0App.credentials.oauthClient!.client_secret!;
     const agent0AppId = agent0App.id!;
     rollbackState = updateRollbackState(rollbackState, {
       agent0AppIds: [agent0AppId],
@@ -202,6 +202,8 @@ async function bootstrap() {
     }) as OpenIdConnectApplication;
 
     const todo0AppId = todo0App.id!;
+    bootstrapConfig.todo0AppClientId = todo0App.credentials.oauthClient!.client_id!;
+    bootstrapConfig.todo0AppClientSecret = todo0App.credentials.oauthClient!.client_secret!;
     rollbackState = updateRollbackState(rollbackState, {
       todo0AppIds: [todo0AppId],
     });
