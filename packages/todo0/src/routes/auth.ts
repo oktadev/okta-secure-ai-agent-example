@@ -8,6 +8,22 @@ export interface AuthConfig {
   oktaRedirectUri: string;
 }
 
+// Helper function to get the OpenID Client configuration
+async function getClientConfig(config: AuthConfig): Promise<Client> {
+  const { oktaIssuer, oktaClientId, oktaClientSecret, oktaRedirectUri } = config;
+  
+  const issuer = await Issuer.discover(oktaIssuer);
+  
+  const client = new issuer.Client({
+    client_id: oktaClientId,
+    client_secret: oktaClientSecret,
+    redirect_uris: [oktaRedirectUri],
+    response_types: ['code'],
+  });
+  
+  return client;
+}
+
 export function createAuthRouter(config: AuthConfig): Router {
   const { oktaIssuer, oktaClientId, oktaClientSecret, oktaRedirectUri } = config;
 
@@ -15,29 +31,6 @@ export function createAuthRouter(config: AuthConfig): Router {
   console.log(`   Issuer: ${oktaIssuer}`);
   console.log(`   Client ID: ${oktaClientId}`);
   console.log(`   Redirect URI: ${oktaRedirectUri}`);
-
-  // Initialize OpenID Client - this will be set after discovery
-  let client: Client | null = null;
-
-  // Discover OpenID configuration and create client
-  (async () => {
-    try {
-      const issuer = await Issuer.discover(oktaIssuer);
-      
-      client = new issuer.Client({
-        client_id: oktaClientId,
-        client_secret: oktaClientSecret,
-        redirect_uris: [oktaRedirectUri],
-        response_types: ['code'],
-      });
-      
-      console.log('✅ OpenID Client initialized successfully');
-      console.log(`   Issuer: ${issuer.metadata.issuer}`);
-    } catch (err: any) {
-      console.error('❌ Failed to initialize OpenID Client:', err.message);
-      process.exit(1);
-    }
-  })();
 
   const router = Router();
 
@@ -47,27 +40,24 @@ router.get('/login', async (req, res) => {
   console.log('[AUTH] Request path:', req.path);
   
   try {
-    if (!client) {
-      throw new Error('OpenID client not ready yet. Please wait a moment and try again.');
-    }
+    // Get OpenID Client configuration
+    const client = await getClientConfig(config);
 
     // Generate PKCE parameters using openid-client generators
-    const codeVerifier = generators.codeVerifier();
-    const codeChallenge = generators.codeChallenge(codeVerifier);
-    
-    // Store code verifier in session for later use
-    req.session.codeVerifier = codeVerifier;
-    
-    // Generate state parameter
+    const code_verifier = generators.codeVerifier();
+    const code_challenge = generators.codeChallenge(code_verifier);
     const state = generators.state();
-    req.session.state = state;
-
+    
+    // Store PKCE parameters in session
+    req.session.pkce = { code_verifier, state };
+    
     // Build authorization URL with PKCE using openid-client
     const authorizationUrl = client.authorizationUrl({
       scope: 'openid profile email',
-      code_challenge: codeChallenge,
+      code_challenge,
       code_challenge_method: 'S256',
-      state: state,
+      state,
+      redirect_uri: oktaRedirectUri,
     });
     
     console.log('[AUTH] Generated PKCE parameters');
@@ -84,7 +74,7 @@ router.get('/callback', async (req, res) => {
   console.log('[AUTH] /callback route hit');
   console.log('[AUTH] Query params:', req.query);
   
-  const { code, error, error_description, state } = req.query;
+  const { code, error, error_description } = req.query;
   
   if (error) {
     console.error('[AUTH] Callback error:', error, error_description);
@@ -97,37 +87,33 @@ router.get('/callback', async (req, res) => {
   }
   
   try {
-    if (!client) {
-      throw new Error('OpenID client not ready yet. Please wait a moment and try again.');
-    }
+    // Get OpenID Client configuration
+    const client = await getClientConfig(config);
 
     console.log('[AUTH] Exchanging code for tokens...');
     
-    // Get code verifier and state from session
-    const codeVerifier = (req.session as any).codeVerifier;
-    const sessionState = (req.session as any).state;
+    // Get PKCE parameters from session
+    const { pkce } = req.session as any;
     
-    if (!codeVerifier) {
-      console.error('[AUTH] Missing code verifier in session');
-      return res.status(400).send('Missing code verifier. Please try logging in again.');
+    if (!pkce || !pkce.code_verifier || !pkce.state) {
+      console.error('[AUTH] Missing PKCE parameters in session');
+      return res.status(400).send('Login session expired or invalid. Please try logging in again.');
     }
     
-    // Verify state parameter
-    if (state !== sessionState) {
-      console.error('[AUTH] State parameter mismatch');
-      return res.status(400).send('Invalid state parameter');
-    }
+    console.log('[AUTH] Retrieved PKCE parameters from session');
     
-    console.log('[AUTH] Retrieved code verifier from session');
-    
-    // Build callback parameters
+    // Build callback parameters from the request
     const params = client.callbackParams(req);
     
     // Exchange authorization code for tokens using openid-client
-    const tokenSet = await client.callback(oktaRedirectUri, params, {
-      code_verifier: codeVerifier,
-      state: sessionState,
-    });
+    const tokenSet = await client.callback(
+      oktaRedirectUri,
+      params,
+      {
+        code_verifier: pkce.code_verifier,
+        state: pkce.state,
+      }
+    );
     
     console.log('[AUTH] Token exchange successful');
     console.log('[AUTH] Token response:', {
@@ -139,39 +125,46 @@ router.get('/callback', async (req, res) => {
     (req.session as any).access_token = tokenSet.access_token;
     (req.session as any).id_token = tokenSet.id_token;
     
-    // Clear code verifier and state from session
-    delete (req.session as any).codeVerifier;
-    delete (req.session as any).state;
+    // Clear PKCE parameters from session
+    delete (req.session as any).pkce;
     
     console.log('[AUTH] Tokens stored in session, redirecting to /');
     res.redirect('/');
   } catch (err: any) {
     console.error('[AUTH] Token exchange failed:', err.message);
     console.error('[AUTH] Error details:', err);
-    res.status(500).send('Token exchange failed: ' + err.message);
+    res.status(500).send(`Authentication failed: ${err.message}`);
   }
 });
 
 router.post('/logout', async (req, res) => {
   console.log('[AUTH] Logout endpoint hit');
   
-  const idToken = (req.session as any).id_token;
-  
-  req.session.destroy((err) => {
-    if (err) {
-      console.error('[AUTH] Session destroy error:', err);
-    }
+  try {
+    // Get OpenID Client configuration
+    const client = await getClientConfig(config);
     
-    console.log('[AUTH] Session destroyed');
+    const idToken = (req.session as any).id_token;
     
-    // Use Okta's proper logout endpoint with id_token_hint
-    const oktaLogoutUrl = `${oktaIssuer}/v1/logout?` +
-      `id_token_hint=${idToken || ''}` +
-      `&post_logout_redirect_uri=${encodeURIComponent('http://localhost:5001/')}`;
-
-    console.log('[AUTH] Redirecting to Okta logout:', oktaLogoutUrl);
-    res.redirect(oktaLogoutUrl);
-  });
+    // Build end session URL using openid-client
+    const logoutUrl = client.endSessionUrl({
+      id_token_hint: idToken,
+      post_logout_redirect_uri: 'http://localhost:5001/',
+    });
+    
+    req.session.destroy((err) => {
+      if (err) {
+        console.error('[AUTH] Session destroy error:', err);
+      }
+      
+      console.log('[AUTH] Session destroyed');
+      console.log('[AUTH] Redirecting to Okta logout:', logoutUrl);
+      res.redirect(logoutUrl);
+    });
+  } catch (err: any) {
+    console.error('[AUTH] Logout error:', err.message);
+    res.status(500).send('Something went wrong during logout.');
+  }
 });
 
   return router;
