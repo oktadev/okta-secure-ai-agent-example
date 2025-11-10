@@ -1,8 +1,15 @@
-# Okta Secure AI Example
+<div align="center">
 
-## Overview
+#  Okta Secure AI Agent Example
 
-This monorepo demonstrates a full-stack agentic application (agent0) that has a secure integration with another application's (todo0) MCP exposed resources.
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.9-blue?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-20+-green?logo=node.js&logoColor=white)](https://nodejs.org/)
+[![pnpm](https://img.shields.io/badge/pnpm-8+-orange?logo=pnpm&logoColor=white)](https://pnpm.io/)
+[![OpenID Connect](https://img.shields.io/badge/OpenID%20Connect-Certified-blue?logo=openid&logoColor=white)](https://openid.net/connect/)
+[![MCP](https://img.shields.io/badge/MCP-Model%20Context%20Protocol-purple)](https://modelcontextprotocol.io/)
+[![License: ISC](https://img.shields.io/badge/License-ISC-yellow.svg)](https://opensource.org/licenses/ISC)
+
+</div >
 
 ### Architecture
 
