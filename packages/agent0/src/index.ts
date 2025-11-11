@@ -2,11 +2,10 @@
 import path from 'path';
 import * as dotenv from 'dotenv';
 import { disconnectAll } from './agent.js';
-import { ResourceServer, ResourceServerConfig } from './resource-server.js';
-import { OktaConfig } from './auth/okta-auth.js';
+import { AppServer } from './app.js';
 
-// Load environment variables
-dotenv.config({ path: path.resolve(__dirname, '../.env') });
+// Load environment variables for app server
+dotenv.config({ path: path.resolve(__dirname, '../.env.app') });
 
 // ============================================================================
 // Main Bootstrap Function
@@ -15,34 +14,14 @@ dotenv.config({ path: path.resolve(__dirname, '../.env') });
 async function bootstrap(): Promise<void> {
   console.log('🚀 Starting Agent0...\n');
 
-  // ============================================================================
-  // 2. Configure and Start Resource Server
-  // ============================================================================
+  // App server validates its own environment internally
+  const appServer = new AppServer();
 
-  const port = parseInt(process.env.PORT || '3000', 10);
-  const sessionSecret = process.env.SESSION_SECRET || 'default-secret-change-in-production';
-
-  const resourceServerConfig: ResourceServerConfig = {
-    port,
-    sessionSecret,
-  };
-
-  // Add Okta configuration if environment variables are set
-  if (process.env.OKTA_DOMAIN && process.env.OKTA_CLIENT_ID && process.env.OKTA_CLIENT_SECRET) {
-    resourceServerConfig.okta = {
-      domain: process.env.OKTA_DOMAIN,
-      clientId: process.env.OKTA_CLIENT_ID,
-      clientSecret: process.env.OKTA_CLIENT_SECRET,
-      redirectUri: process.env.OKTA_REDIRECT_URI || `http://localhost:${port}/callback`,
-    } as OktaConfig;
-  }
-
-  const resourceServer = new ResourceServer(resourceServerConfig);
-
-  // Start the resource server
-  await resourceServer.start();
+  // Start the app server
+  await appServer.start();
 
   // Open browser to the UI
+  const port = appServer.getPort();
   try {
     const open = (await (0, eval)("import('open')")).default;
     console.log(`✅ Opening browser at http://localhost:${port}`);
@@ -52,7 +31,7 @@ async function bootstrap(): Promise<void> {
   }
 
   // ============================================================================
-  // 3. Handle Graceful Shutdown
+  // Handle Graceful Shutdown
   // ============================================================================
 
   process.on('SIGINT', async () => {
@@ -80,7 +59,4 @@ if (require.main === module) {
 }
 
 // Export for programmatic use
-export { 
-  ResourceServer, 
-  ResourceServerConfig
-};
+export { AppServer };

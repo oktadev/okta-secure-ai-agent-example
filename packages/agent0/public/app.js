@@ -16,10 +16,6 @@ const tokenPanel = document.getElementById('tokenPanel');
 const tokenPanelClose = document.getElementById('tokenPanelClose');
 const copyTokenButton = document.getElementById('copyTokenButton');
 const copyJwtButton = document.getElementById('copyJwtButton');
-const crossAppAccessButton = document.getElementById('crossAppAccessButton');
-const idJagModal = document.getElementById('idJagModal');
-const idJagModalClose = document.getElementById('idJagModalClose');
-const copyIdJagButton = document.getElementById('copyIdJagButton');
 
 let isConnected = false;
 let llmEnabled = false;
@@ -155,7 +151,6 @@ async function checkAuthStatus() {
                 loginButton.style.display = 'none';
                 logoutButton.style.display = 'inline-block';
                 tokenPanelToggle.style.display = 'inline-block';
-                crossAppAccessButton.style.display = 'inline-block';
                 loginPrompt.style.display = 'none';
                 
                 // Store user data globally for access
@@ -169,7 +164,6 @@ async function checkAuthStatus() {
                 loginButton.style.display = 'inline-block';
                 logoutButton.style.display = 'none';
                 tokenPanelToggle.style.display = 'none';
-                crossAppAccessButton.style.display = 'none';
                 loginPrompt.style.display = 'flex';
                 
                 window.currentUser = null;
@@ -320,133 +314,6 @@ async function copyToClipboard(text, button) {
     }
 }
 
-// Cross-App Access: Exchange ID token for ID-JAG token
-async function handleCrossAppAccess() {
-    try {
-        // Show loading state
-        crossAppAccessButton.classList.add('loading');
-        crossAppAccessButton.disabled = true;
-
-        // Show modal with progress
-        showIdJagProgress();
-
-        const response = await fetch(`${API_BASE_URL}/cross-app-access`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            credentials: 'include', // Important for session cookies
-        });
-
-        const data = await response.json();
-
-        if (response.ok && data.success) {
-            // Show success modal with both ID-JAG and Access Token
-            showIdJagSuccess(data);
-        } else {
-            // Show error message
-            showIdJagError(data.error || 'Failed to exchange token', data.details || data.note);
-        }
-    } catch (error) {
-        console.error('Cross-app access error:', error);
-        showIdJagError('Network error', error.message);
-    } finally {
-        // Remove loading state
-        crossAppAccessButton.classList.remove('loading');
-        crossAppAccessButton.disabled = false;
-    }
-}
-
-// Show progress during token exchange
-function showIdJagProgress() {
-    const modalBody = document.querySelector('#idJagModal .modal-body');
-    modalBody.innerHTML = `
-        <div class="progress-container">
-            <div class="progress-step">
-                <div class="progress-icon loading">⏳</div>
-                <div class="progress-text">
-                    <strong>Step 1: Requesting ID-JAG</strong>
-                    <small>Exchanging ID Token for Identity Assertion JWT...</small>
-                </div>
-            </div>
-            <div class="progress-step">
-                <div class="progress-icon pending">⏸️</div>
-                <div class="progress-text">
-                    <strong>Step 2: Requesting Access Token</strong>
-                    <small>Exchanging ID-JAG for Access Token...</small>
-                </div>
-            </div>
-        </div>
-    `;
-    idJagModal.style.display = 'flex';
-}
-
-// Show success with both tokens
-function showIdJagSuccess(data) {
-    const modalBody = document.querySelector('#idJagModal .modal-body');
-    
-    modalBody.innerHTML = `
-        <div class="success-message">
-            <span class="success-icon">✅</span>
-            <span>Token exchange completed successfully!</span>
-        </div>
-        
-        ${data.id_jag ? `
-        <div class="token-section">
-            <h4>📋 Step 1: ID-JAG Token</h4>
-            <div class="info-item">
-                <strong>Status:</strong> <span class="status-badge success">Obtained ✓</span>
-            </div>
-            <div class="info-item">
-                <strong>Type:</strong> ${data.issued_token_type || 'ID-JAG'}
-            </div>
-            <button class="copy-button" onclick="copyToClipboard('${data.id_jag}', 'ID-JAG')">
-                📋 Copy ID-JAG
-            </button>
-            <pre class="token-display">${data.id_jag.substring(0, 100)}...</pre>
-        </div>
-        ` : ''}
-        
-        ${data.access_token ? `
-        <div class="token-section highlight">
-            <h4>🎯 Step 2: Access Token (Final)</h4>
-            <div class="info-item">
-                <strong>Status:</strong> <span class="status-badge success">Ready to use ✓</span>
-            </div>
-            <div class="info-item">
-                <strong>Token Type:</strong> ${data.token_type || 'Bearer'}
-            </div>
-            <div class="info-item">
-                <strong>Expires In:</strong> ${data.expires_in ? `${data.expires_in} seconds` : 'N/A'}
-            </div>
-            ${data.scope ? `<div class="info-item"><strong>Scope:</strong> ${data.scope}</div>` : ''}
-            <div class="token-actions">
-                <button class="copy-button primary" onclick="copyToClipboard('${data.access_token}', 'Access Token')">
-                    📋 Copy Access Token
-                </button>
-                <button class="copy-button" onclick="saveToEnvNotification()">
-                    💾 Saved to Environment
-                </button>
-            </div>
-            <div class="token-warning">✓ Token automatically saved for MCP server use</div>
-            <pre class="token-display">${data.access_token}</pre>
-        </div>
-        ` : ''}
-        
-        ${data.note ? `
-        <div class="info-note warning">
-            <strong>Note:</strong> ${data.note}
-        </div>
-        ` : ''}
-    `;
-    
-    // Store tokens for copy functionality
-    window.currentIdJagToken = data.id_jag;
-    window.currentAccessToken = data.access_token;
-    
-    idJagModal.style.display = 'flex';
-}
-
 // Global copy function
 function copyToClipboard(text, label) {
     navigator.clipboard.writeText(text).then(() => {
@@ -474,64 +341,6 @@ function showNotification(message, type = 'success') {
     }, 3000);
 }
 
-function saveToEnvNotification() {
-    showNotification('Access token is already saved to environment variables');
-}
-
-// Show error message in modal
-function showIdJagError(error, details) {
-    const modalBody = document.querySelector('#idJagModal .modal-body');
-    
-    // Replace content with error message
-    modalBody.innerHTML = `
-        <div class="error-message">
-            <span class="error-icon">❌</span>
-            <div>
-                <strong>${error}</strong>
-                ${details ? `<br><small>${details}</small>` : ''}
-            </div>
-        </div>
-        <button class="primary-button" onclick="closeIdJagModal()">Close</button>
-    `;
-
-    // Show modal
-    idJagModal.style.display = 'flex';
-}
-
-// Close ID-JAG modal
-function closeIdJagModal() {
-    idJagModal.style.display = 'none';
-    
-    // Reset modal content after animation
-    setTimeout(() => {
-        const modalBody = document.querySelector('#idJagModal .modal-body');
-        modalBody.innerHTML = `
-            <div class="success-message">
-                <span class="success-icon">✅</span>
-                <span>Successfully exchanged ID token for ID-JAG token!</span>
-            </div>
-            <div class="token-section">
-                <h4>Token Information</h4>
-                <div id="idJagTokenInfo" class="token-info"></div>
-            </div>
-            <div class="token-section">
-                <h4>ID-JAG Access Token</h4>
-                <div class="token-warning">⚠️ This token can be used to access the target service</div>
-                <button id="copyIdJagButton" class="copy-button">📋 Copy Token</button>
-                <pre id="idJagTokenValue" class="token-claims"></pre>
-            </div>
-        `;
-        
-        // Reattach copy button listener
-        const newCopyButton = document.getElementById('copyIdJagButton');
-        if (newCopyButton) {
-            newCopyButton.addEventListener('click', async () => {
-                await copyToClipboard(window.currentIdJagToken || '', newCopyButton);
-            });
-        }
-    }, 300);
-}
-
 // Attach event listeners
 if (loginButton) loginButton.addEventListener('click', handleLogin);
 if (logoutButton) logoutButton.addEventListener('click', handleLogout);
@@ -553,20 +362,6 @@ if (copyJwtButton) copyJwtButton.addEventListener('click', async () => {
     const jwt = document.getElementById('tokenJwt').textContent;
     await copyToClipboard(jwt, copyJwtButton);
 });
-if (crossAppAccessButton) crossAppAccessButton.addEventListener('click', handleCrossAppAccess);
-if (idJagModalClose) idJagModalClose.addEventListener('click', closeIdJagModal);
-if (copyIdJagButton) copyIdJagButton.addEventListener('click', async () => {
-    await copyToClipboard(window.currentIdJagToken || '', copyIdJagButton);
-});
-
-// Close modal when clicking outside
-if (idJagModal) {
-    idJagModal.addEventListener('click', (e) => {
-        if (e.target === idJagModal) {
-            closeIdJagModal();
-        }
-    });
-}
 
 // Show typing indicator
 function showTypingIndicator() {

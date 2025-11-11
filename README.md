@@ -18,7 +18,8 @@ graph TB
     User[User/Browser]
     Anthropic[Anthropic API<br/>Claude]
     Okta_Org_AS[Okta Org AS<br/>/oauth2/v1<br/>For human SSO & ID-JAGs]
-    Okta_Custom_AS[Okta Custom AS<br/>/oauth2/default/v1<br/>todo0 authorization server]
+    Okta_IDP
+    Okta_MCP_AS[Todo MCP Authorization Server<br/>/oauth2/aus.../v1<br/>For MCP Server protection]
 
     subgraph Agent0[agent0]
         subgraph ResourceServer[Resource server :3000]
@@ -34,18 +35,16 @@ graph TB
     end
 
     subgraph Todo0[todo0]
-        MCP_Server[MCP Server :3001<br/>Tools Layer]
-        Todo_API[Todo REST API :5001<br/>Express + Prisma]
+        MCP_Server[MCP Server :5002<br/>Tools Layer<br/>Validates JWT & Scopes]
     end
 
     User -->|HTTP Requests| ResourceServer
-    ResourceServer-->|oidc client for human sso| Okta_Org_AS
+    ResourceServer-->|oidc client for human sso| Okta_IDP
     LLM_Integration -->|AI Requests| Anthropic
     AgentIdentity -->| agent client w/ for ID-JAG | Okta_Org_AS
-    AgentIdentity -->| agent client use ID-JAG to get todo0 AT | Okta_Custom_AS
-    MCP_Client -->|MCP Protocol<br/>:3001| MCP_Server
-    MCP_Server -->|Internal Calls| Todo_API
-    Todo_API -->|Validates JWT| Okta_Custom_AS
+    AgentIdentity -->| agent client use ID-JAG to get MCP AT | Okta_MCP_AS
+    MCP_Client -->|MCP Protocol<br/>with JWT| MCP_Server
+    MCP_Server -->|Validates JWT| Okta_MCP_AS
     Chat-->AgentIdentity
 
     style Auth fill:#99ccff
@@ -54,9 +53,8 @@ graph TB
     style MCP_Client fill:#e1f5ff
     style LLM_Integration fill:#e1f5ff
     style MCP_Server fill:#fff4e1
-    style Todo_API fill:#ffe1f5
     style Okta_Org_AS fill:#e8f4f8
-    style Okta_Custom_AS fill:#f0e8f4
+    style Okta_MCP_AS fill:#f0e8f4
     style Anthropic fill:#f0f0f0
     style ResourceServer fill:#cce6ff,stroke:#0066cc,stroke-width:1px
     style AgentIdentity fill:#d9f0ff,stroke:#0066cc,stroke-width:1px
@@ -75,117 +73,190 @@ graph TB
   - **agent0 Agent Identity** (Registered agent in Okta):
     - MCP Client: Connects to todo0's MCP Server
     - LLM Integration: Interfaces with Anthropic's Claude API
-    - Authenticates with **Okta Custom AS** (`/oauth2/default/v1`) using Client Credentials
-- todo0 Package: Port 5001 (API) / Port 3001 (MCP Server)
-  - **Todo MCP Server**: Tools layer for todo operations
-  - **Todo REST API**: Express + Prisma backend
-  - Protected by **Okta Custom AS** (`/oauth2/default/v1`) - validates JWTs from the Custom AS
+    - Authenticates with **Okta Org AS** (`/oauth2/v1`) using Client Credentials to request ID-JAG
+    - Authenticates with **Todo MCP Authorization Server** using JWT Bearer grant to exchange ID-JAG for MCP access token
+- todo0 Package: Port 5002 (MCP Server)
+  - **Todo MCP Server**: Tools layer for todo operations (Express + Prisma)
+  - Validates JWTs issued by **Todo MCP Authorization Server**
+  - Validates scopes (`mcp:connect`, `mcp:tools:read`, `mcp:tools:manage`) for authorization
 
 **Okta Authorization Servers:**
 
-- **Okta Org AS** (`/oauth2/v1`): Used for human SSO (Single Sign-On)
+- **Okta Org AS** (`/oauth2/v1`): Used for human SSO (Single Sign-On) and ID-JAG issuance
   - Handles user authentication for the OIDC Client
   - Issues tokens for human users accessing the Resource Server
-- **Okta Custom AS** (`/oauth2/default/v1`): Used for API protection and service-to-service auth
-  - Handles Agent Identity authentication via Client Credentials flow
+  - Issues ID-JAG tokens for Agent Identity via Client Credentials flow
+- **Todo MCP Authorization Server** (Custom AS): Used for MCP Server protection
+  - Exchanges ID-JAG tokens for MCP-scoped access tokens via JWT Bearer grant
   - Issues tokens that todo0's MCP Server validates
-  - Provides fine-grained authorization for API resources
+  - Provides fine-grained authorization with MCP-specific scopes
 
 **Architecture Flow:**
 
 - Users interact with the Resource Server's UI, Auth, and Chat endpoints
 - The Resource Server uses the Agent Identity to process AI-powered requests
-- **Human Authentication**: The OIDC Client authenticates users via **Okta Org AS** (`/oauth2/v1`) and shares ID tokens with the Agent Identity
-- **Service Authentication**: The Agent Identity authenticates as a workload principal with the **Okta Custom AS** (`/oauth2/default/v1`) via Client Credentials flow
-- The MCP Client (within Agent Identity) communicates with todo0's MCP Server on port 3001
-- The todo0 MCP Server validates JWTs issued by **Okta Custom AS** (`/oauth2/default/v1`)
+- **Human Authentication**: The OIDC Client authenticates users via **Okta Org AS** (`/oauth2/v1`)
+- **Agent Authentication**:
+  1. Agent Identity obtains ID-JAG token from **Okta Org AS** via Client Credentials flow
+  2. Agent Identity exchanges ID-JAG for MCP access token from **Todo MCP Authorization Server** via JWT Bearer grant
+- The MCP Client (within Agent Identity) communicates with todo0's MCP Server on port 5002 using the MCP access token
+- The todo0 MCP Server validates JWTs and scopes issued by **Todo MCP Authorization Server**
 - The LLM Integration enables Claude AI capabilities for chat and agent operations
 
 ### Features
 
-- RESTful todo API with authentication (Express + Prisma)
-- MCP server with tools for managing todos (create, list, update, complete, delete)
+- MCP server with tools for managing todos
 - MCP client for interacting with the MCP server
-- Okta OAuth2 authentication
+- Okta OAuth2 authentication with ID-JAG token exchange
+- JWT validation and scope-based authorization
 - pnpm workspace structure
 
 ## Packages
 
 - `agent0`: Contains the MCP client implementation with Anthropic Claude integration
-- `todo0`: Contains the MCP server, Express/Prisma REST API, and web UI
+- `todo0`: Contains the MCP server with Express/Prisma backend
 
-## MCP Server Tools
+## Setup
 
-- `create-todo`: Create a new todo (requires create:todos scope)
-- `get-todos`: List todos (admins see all, users see own)
-- `update-todo`: Edit the title/content of a todo
-- `toggle-todo`: Toggle the completed status of a todo
-- `delete-todo`: Delete a todo (own todos or admin access)
+### Prerequisites
 
-## Run Instructions
+Before running the bootstrap script, you'll need:
 
-### Install dependencies
+1. **Okta Developer Account**
+   - Sign up for free at [https://developer.okta.com/signup/](https://developer.okta.com/signup/)
+
+2. **Okta API Token** with admin permissions
+   - Create via: Okta Admin Console → Security → API → Tokens → Create Token
+
+3. **Anthropic API Key** (optional, for LLM integration)
+   - Sign up at [https://console.anthropic.com/](https://console.anthropic.com/)
+   - Alternative: Configure AWS Bedrock credentials instead
+   - **Note** These will need to be configured in packages/agent0/.env.agent at a later step.
+
+### Automated Configuration
+
+Run the interactive bootstrap script to automatically configure your Okta tenant and generate all required configuration files:
+
+```sh
+pnpm run bootstrap:okta
+```
+
+**The script will prompt you for:**
+
+- Okta domain (e.g., dev-12345.okta.com)
+- Okta API token
+- Audience values for each authorization server (or use defaults)
+- Owner setup method (Standard API recommended)
+
+**What gets automatically created:**
+
+**In Okta:**
+
+- 1 Authorization Server (Todo MCP Authorization Server)
+- Custom scopes for MCP Server:
+  - `mcp:connect` - Establish MCP connection
+  - `mcp:tools:read` - Use tools that read todo data
+  - `mcp:tools:manage` - Use tools that manage todo data
+- 2 OIDC Applications (agent0 web app, todo0 web app)
+- Agent Identity with RSA key pair for workload authentication
+- Agent Connection to Todo MCP Authorization Server
+- Access policies and rules with JWT Bearer grant type
+- 2 Trusted Origins (ports 3000, 5002)
+- User assignment to both OIDC applications
+
+**Locally:**
+
+- `packages/agent0/.env.app` - Agent0 resource server configuration
+- `packages/agent0/.env.agent` - Agent0 agent identity configuration with MCP settings
+- `packages/todo0/.env` - Todo0 MCP server configuration
+- `packages/agent0/agent0-private-key.pem` - RSA private key (600 permissions)
+- `okta-config-report.md` - Detailed configuration report
+- `.okta-bootstrap-state.json` - State file for rollback
+
+### Verification
+
+After bootstrap completes, verify your configuration:
+
+```sh
+pnpm run validate:okta
+```
+
+This runs automated checks to ensure:
+
+- All .env files exist with required variables
+- Authorization servers are reachable
+- Private key is valid
+- ID-JAG token exchange flow works
+- Audiences are properly separated
+
+### Rollback
+
+To completely remove all Okta resources and local files created by bootstrap:
+
+```sh
+pnpm run rollback:okta
+```
+
+This will:
+
+- Delete all authorization servers, applications, and agent identities from Okta
+- Remove trusted origins
+- Optionally delete local .env files and private keys
+- Clean up the state file
+
+### Manual Configuration
+
+If you prefer to manually configure Okta and create your own .env files, refer to the `.env.example` files in each package:
+
+- `packages/agent0/.env.agent.example`
+- `packages/agent0/.env.app.example`
+- `packages/todo0/.env.example`
+
+## Install & build
+
+### 1. Install dependencies
 
 ```sh
 pnpm install
 ```
 
-### Bootstrap prisma client
+### 2. Approve builds & build
 
 ```sh
-pnpm boostrap
+pnpm approve-builds
 ```
 
-### Start REST API (todo0)
+### 3. Init prisma client
 
 ```sh
-pnpm run start:todo0
+pnpm init:prisma
 ```
 
-### Start MCP Server (todo0)
+### 4. Build
+
+```sh
+pnpm build
+```
+
+## 6. Make sure env files are correct
+
+If you used `pnpm run bootstrap:okta`, then your .env files are 99% ready to go.
+
+**Note** make sure that you update packages/agent0/.env.agent with either the anthropic keys and values or the aws bedrock keys and values so the agent can interact with an LLM. Comment out the set of key value pairs you are not using.
+
+## Running the demo services
+
+### 7. Start todo0 MCP server
 
 ```sh
 pnpm run start:mcp
 ```
 
-### Start MCP Client (agent0)
+### 8. Start agent0 application
 
 ```sh
-pnpm run start:client0
+pnpm run start:agent0
 ```
-
-## Environment Variables
-
-Each package has its own `.env.example` file. Copy it to `.env` and configure with your values.
-
-### agent0 Environment Variables
-
-**MCP Client Configuration:**
-
-- `ANTHROPIC_API_KEY`: Your Anthropic API key
-- `ANTHROPIC_MODEL`: Claude model to use (default: claude-3-5-sonnet-20241022)
-
-**Okta OAuth Configuration:**
-
-- `OKTA_DOMAIN`: Your Okta domain (e.g., dev-12345.okta.com)
-- `OKTA_CLIENT_ID`: OAuth client ID for user authentication
-- `OKTA_CLIENT_SECRET`: OAuth client secret
-- `OKTA_REDIRECT_URI`: OAuth callback URL
-- `MCP_SERVER_URL`: URL to the MCP server (default: <http://localhost:3001/sse>)
-
-### todo0 Environment Variables
-
-**REST API Configuration:**
-
-- `PORT`: API server port (default: 5001)
-- `OKTA_ISSUER`: Okta issuer URL for JWT validation
-- `OKTA_CLIENT_ID`: OAuth client ID
-- `EXPECTED_AUDIENCE`: Expected audience in JWT validation (default: api://default)
-
-**MCP Server Configuration:**
-
-- `TODO_API_BASE_URL`: Base URL for the todo API (default: <http://localhost:5001>)
-- `TODO_ACCESS_TOKEN`: Access token for todo API authentication
 
 ## Notes
 

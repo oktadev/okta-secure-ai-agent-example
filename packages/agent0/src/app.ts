@@ -1,48 +1,153 @@
-// resource-server.ts - Agent0 Resource Server (Express)
+// app.ts - Agent0 App Server (Express)
 import express, { Request, Response } from 'express';
 import * as path from 'path';
 import cookieParser from 'cookie-parser';
-import { getAgentForSession, UserContext } from './agent.js';
+import { getAgentForSession } from './agent.js';
 import { OktaAuthHelper, OktaConfig, createSessionMiddleware } from './auth/okta-auth.js';
-import { TokenExchangeHandler, TokenExchangeConfig, createTokenExchangeConfig } from './auth/token-exchange.js';
 
 // ============================================================================
-// Resource Server Configuration
+// App Server Configuration Types
 // ============================================================================
 
-export interface ResourceServerConfig {
+/**
+ * App server configuration (discriminated union for optional Okta)
+ */
+type AppServerConfig = {
+  port: number;
+  sessionSecret: string;
+} & (
+  | {
+      hasOkta: true;
+      oktaDomain: string;
+      oktaClientId: string;
+      oktaClientSecret: string;
+      oktaRedirectUri: string;
+    }
+  | {
+      hasOkta: false;
+    }
+);
+
+/**
+ * Internal configuration after processing
+ */
+interface AppServerInternalConfig {
   port: number;
   sessionSecret: string;
   okta?: OktaConfig;
 }
 
 // ============================================================================
-// Resource Server Class
+// Environment Validation Function
 // ============================================================================
 
-export class ResourceServer {
-  private app: express.Application;
-  private config: ResourceServerConfig;
-  private oktaAuthHelper: OktaAuthHelper | null = null;
-  private tokenExchangeHandler: TokenExchangeHandler | null = null;
+/**
+ * Validate app server environment variables and return typed configuration
+ */
+function validateAppServerEnv(): AppServerConfig {
+  const missing: string[] = [];
+  const invalid: string[] = [];
 
-  constructor(config: ResourceServerConfig) {
-    this.config = config;
+  // Check required variables
+  if (!process.env.PORT || process.env.PORT.trim() === '') {
+    missing.push('PORT');
+  }
+  if (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.trim() === '') {
+    missing.push('SESSION_SECRET');
+  }
+
+  // Check optional Okta configuration (all or none)
+  const oktaDomain = process.env.OKTA_DOMAIN;
+  const oktaClientId = process.env.OKTA_CLIENT_ID;
+  const oktaClientSecret = process.env.OKTA_CLIENT_SECRET;
+  const oktaRedirectUri = process.env.OKTA_REDIRECT_URI;
+
+  const oktaVarsSet = [oktaDomain, oktaClientId, oktaClientSecret, oktaRedirectUri].filter(v => v && v.trim() !== '');
+  const hasPartialOkta = oktaVarsSet.length > 0 && oktaVarsSet.length < 4;
+
+  if (hasPartialOkta) {
+    if (!oktaDomain || oktaDomain.trim() === '') missing.push('OKTA_DOMAIN');
+    if (!oktaClientId || oktaClientId.trim() === '') missing.push('OKTA_CLIENT_ID');
+    if (!oktaClientSecret || oktaClientSecret.trim() === '') missing.push('OKTA_CLIENT_SECRET');
+    if (!oktaRedirectUri || oktaRedirectUri.trim() === '') missing.push('OKTA_REDIRECT_URI');
+  }
+
+  // Report errors and exit if validation fails
+  if (missing.length > 0 || invalid.length > 0) {
+    console.error('❌ Environment configuration error in .env.app');
+    if (missing.length > 0) {
+      console.error('   Missing required variables:', missing.join(', '));
+    }
+    if (invalid.length > 0) {
+      console.error('   Invalid variables:', invalid.join(', '));
+    }
+    console.error('   Check packages/agent0/.env.app file');
+    console.error('   Note: Okta variables must be all present or all absent');
+    process.exit(1);
+  }
+
+  console.log('✅ App server environment variables validated');
+
+  const baseConfig = {
+    port: parseInt(process.env.PORT!, 10),
+    sessionSecret: process.env.SESSION_SECRET!,
+  };
+
+  // Return discriminated union based on Okta configuration
+  if (oktaVarsSet.length === 4) {
+    return {
+      ...baseConfig,
+      hasOkta: true,
+      oktaDomain: oktaDomain!,
+      oktaClientId: oktaClientId!,
+      oktaClientSecret: oktaClientSecret!,
+      oktaRedirectUri: oktaRedirectUri!,
+    };
+  } else {
+    return {
+      ...baseConfig,
+      hasOkta: false,
+    };
+  }
+}
+
+// ============================================================================
+// App Server Class
+// ============================================================================
+
+export class AppServer {
+  private app: express.Application;
+  private config: AppServerInternalConfig;
+  private oktaAuthHelper: OktaAuthHelper | null = null;
+
+  constructor() {
+    // Validate environment and get typed config
+    const envConfig = validateAppServerEnv();
+
+    this.config = {
+      port: envConfig.port,
+      sessionSecret: envConfig.sessionSecret,
+    };
+
     this.app = express();
 
     // Initialize Okta Auth if configured
-    if (this.config.okta) {
+    if (envConfig.hasOkta) {
+      this.config.okta = {
+        domain: envConfig.oktaDomain,
+        clientId: envConfig.oktaClientId,
+        clientSecret: envConfig.oktaClientSecret,
+        redirectUri: envConfig.oktaRedirectUri,
+      };
       this.oktaAuthHelper = new OktaAuthHelper(this.config.okta);
-    }
-
-    // Initialize Token Exchange if configured
-    const tokenExchangeConfig = createTokenExchangeConfig();
-    if (tokenExchangeConfig) {
-      this.tokenExchangeHandler = new TokenExchangeHandler(tokenExchangeConfig);
     }
 
     this.setupMiddleware();
     this.setupRoutes();
+  }
+
+  public getPort(): number {
+    return this.config.port;
   }
 
   // ============================================================================
@@ -121,19 +226,6 @@ export class ResourceServer {
     this.app.get('/auth/user', this.oktaAuthHelper.requireAuth(), (req, res) => {
       this.oktaAuthHelper!.handleUserInfo(req, res);
     });
-
-    // Cross-app access: Exchange ID token for ID-JAG token
-    if (this.tokenExchangeHandler) {
-      this.app.post('/cross-app-access', this.oktaAuthHelper.requireAuth(), async (req, res) => {
-        // Wrap the original response to intercept the access token
-        const originalJson = res.json.bind(res);
-        res.json = (body: any) => {
-          return originalJson(body);
-        };
-
-        await this.tokenExchangeHandler!.handleCrossAppAccess(req, res);
-      });
-    }
   }
 
   // ============================================================================
@@ -189,7 +281,7 @@ export class ResourceServer {
   private handleHealth(_req: Request, res: Response): void {
     res.json({
       status: 'ok',
-      service: 'agent0 Resource Server',
+      service: 'agent0 App Server',
       oktaEnabled: this.oktaAuthHelper ? true : false,
       llmEnabled: true,
       timestamp: new Date().toISOString(),
@@ -204,7 +296,7 @@ export class ResourceServer {
     return new Promise<void>((resolve) => {
       this.app.listen(this.config.port, () => {
         console.log('='.repeat(60));
-        console.log('🚀 Agent0 Resource Server');
+        console.log('🚀 Agent0 App Server');
         console.log('='.repeat(60));
         console.log(`✓ Server running on http://localhost:${this.config.port}`);
         console.log(`✓ Health check: http://localhost:${this.config.port}/health`);
@@ -218,7 +310,6 @@ export class ResourceServer {
           console.log(`  - Okta Domain: ${this.config.okta.domain}`);
           console.log(`  - Login URL: http://localhost:${this.config.port}/login`);
         }
-        console.log(`  - Token Exchange: ${this.tokenExchangeHandler ? '✅ Configured' : '❌ Not Configured'}`);
         console.log('='.repeat(60));
         console.log('Ready! 🎉');
         console.log('');

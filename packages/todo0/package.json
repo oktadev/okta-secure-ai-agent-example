@@ -1,11 +1,11 @@
 {
   "name": "todo0",
   "version": "1.0.0",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "dist/app-server.js",
+  "types": "dist/app-server.d.ts",
   "scripts": {
     "build": "tsc",
-    "start": "node dist/index.js",
+    "start": "node dist/app-server.js",
     "start:mcp": "node dist/mcp-server.js",
     "dev:mcp": "tsc && node dist/mcp-server.js",
     "generate:client": "prisma generate",

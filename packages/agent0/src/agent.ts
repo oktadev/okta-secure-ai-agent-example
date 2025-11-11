@@ -1,15 +1,150 @@
 // agent.ts - Agent Identity: MCP Client + LLM Integration
 import path from 'path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import Anthropic from '@anthropic-ai/sdk';
 import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
-import { TokenExchangeHandler, createTokenExchangeConfig } from './auth/token-exchange.js';
+import { TokenExchangeHandler, TokenExchangeConfig } from './auth/token-exchange.js';
 import { Request } from 'express';
 import * as dotenv from 'dotenv';
 
-// Load environment variables
-dotenv.config({ path: path.resolve(__dirname, '../.env') });
+// Load environment variables for agent
+dotenv.config({ path: path.resolve(__dirname, '../.env.agent') });
+
+// ============================================================================
+// Agent LLM Configuration Types
+// ============================================================================
+
+/**
+ * Agent LLM configuration (discriminated union for Anthropic vs Bedrock)
+ */
+type AgentLLMConfig = {
+  mcpServerUrl: string;
+} & (
+  | {
+      llmProvider: 'anthropic';
+      anthropicApiKey: string;
+      anthropicModel: string;
+    }
+  | {
+      llmProvider: 'bedrock';
+      awsRegion: string;
+      awsAccessKeyId: string;
+      awsSecretAccessKey: string;
+      awsSessionToken?: string; // Optional
+      bedrockModelId: string;
+    }
+);
+
+// ============================================================================
+// Environment Validation Function
+// ============================================================================
+
+/**
+ * Validate agent LLM environment variables and return typed configuration
+ */
+function validateAgentLLMEnv(): AgentLLMConfig {
+  const missing: string[] = [];
+  const invalid: string[] = [];
+
+  // Check MCP_SERVER_URL
+  if (!process.env.MCP_SERVER_URL || process.env.MCP_SERVER_URL.trim() === '') {
+    missing.push('MCP_SERVER_URL');
+  } else {
+    try {
+      new URL(process.env.MCP_SERVER_URL);
+    } catch {
+      invalid.push('MCP_SERVER_URL (invalid URL format)');
+    }
+  }
+
+  // Detect which LLM provider is being configured
+  const hasAnthropicKey = process.env.ANTHROPIC_API_KEY && process.env.ANTHROPIC_API_KEY.trim() !== '';
+  const hasBedrockVars = (process.env.AWS_REGION && process.env.AWS_REGION.trim() !== '') ||
+                          (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_ACCESS_KEY_ID.trim() !== '');
+
+  // Error if both providers are configured
+  if (hasAnthropicKey && hasBedrockVars) {
+    console.error('❌ Environment configuration error in .env.agent');
+    console.error('   Cannot configure both Anthropic and AWS Bedrock providers');
+    console.error('   Please choose one LLM provider:');
+    console.error('   - For Anthropic: Set ANTHROPIC_API_KEY and ANTHROPIC_MODEL');
+    console.error('   - For Bedrock: Set AWS_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, BEDROCK_MODEL_ID');
+    process.exit(1);
+  }
+
+  // Error if neither provider is configured
+  if (!hasAnthropicKey && !hasBedrockVars) {
+    console.error('❌ Environment configuration error in .env.agent');
+    console.error('   No LLM provider configured');
+    console.error('   Please configure one LLM provider:');
+    console.error('   - For Anthropic: Set ANTHROPIC_API_KEY and ANTHROPIC_MODEL');
+    console.error('   - For Bedrock: Set AWS_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, BEDROCK_MODEL_ID');
+    process.exit(1);
+  }
+
+  // Validate Anthropic configuration
+  if (hasAnthropicKey) {
+    if (!process.env.ANTHROPIC_MODEL || process.env.ANTHROPIC_MODEL.trim() === '') {
+      missing.push('ANTHROPIC_MODEL');
+    }
+  }
+
+  // Validate Bedrock configuration
+  if (hasBedrockVars) {
+    if (!process.env.AWS_REGION || process.env.AWS_REGION.trim() === '') {
+      missing.push('AWS_REGION');
+    }
+    if (!process.env.AWS_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY_ID.trim() === '') {
+      missing.push('AWS_ACCESS_KEY_ID');
+    }
+    if (!process.env.AWS_SECRET_ACCESS_KEY || process.env.AWS_SECRET_ACCESS_KEY.trim() === '') {
+      missing.push('AWS_SECRET_ACCESS_KEY');
+    }
+    if (!process.env.BEDROCK_MODEL_ID || process.env.BEDROCK_MODEL_ID.trim() === '') {
+      missing.push('BEDROCK_MODEL_ID');
+    }
+    // AWS_SESSION_TOKEN is optional, don't validate
+  }
+
+  // Report errors and exit if validation fails
+  if (missing.length > 0 || invalid.length > 0) {
+    console.error('❌ Environment configuration error in .env.agent');
+    if (missing.length > 0) {
+      console.error('   Missing required variables:', missing.join(', '));
+    }
+    if (invalid.length > 0) {
+      console.error('   Invalid variables:', invalid.join(', '));
+    }
+    console.error('   Check packages/agent0/.env.agent file');
+    process.exit(1);
+  }
+
+  console.log('✅ Agent LLM environment variables validated');
+
+  // Return properly typed discriminated union
+  if (hasAnthropicKey) {
+    return {
+      mcpServerUrl: process.env.MCP_SERVER_URL!,
+      llmProvider: 'anthropic',
+      anthropicApiKey: process.env.ANTHROPIC_API_KEY!,
+      anthropicModel: process.env.ANTHROPIC_MODEL!,
+    };
+  } else {
+    return {
+      mcpServerUrl: process.env.MCP_SERVER_URL!,
+      llmProvider: 'bedrock',
+      awsRegion: process.env.AWS_REGION!,
+      awsAccessKeyId: process.env.AWS_ACCESS_KEY_ID!,
+      awsSecretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
+      awsSessionToken: process.env.AWS_SESSION_TOKEN,
+      bedrockModelId: process.env.BEDROCK_MODEL_ID!,
+    };
+  }
+}
+
+// Validate and get typed LLM configuration
+const llmConfig = validateAgentLLMEnv();
 
 // ============================================================================
 // Agent Configuration
@@ -23,6 +158,9 @@ export interface AgentConfig {
   // This instance is bound to a particular user and id token
   userContext: UserContext;
   idToken: string;
+
+  // Token Exchange Config
+  tokenExchange?: TokenExchangeConfig;
 
   // Anthropic Direct
   anthropicApiKey?: string;
@@ -42,21 +180,53 @@ export interface UserContext {
   sub: string;
 }
 
-const agentConfig: Omit<AgentConfig, 'idToken' | 'userContext'> = {
-  mcpServerUrl: process.env.MCP_SERVER_URL || 'http://localhost:5002',
-  name: 'agent0',
-  version: '1.0.0',
-  // Anthropic Direct
-  anthropicApiKey: process.env.ANTHROPIC_API_KEY,
-  anthropicModel: process.env.ANTHROPIC_MODEL || 'claude-3-5-sonnet-20241022',
-  // AWS Bedrock
-  awsRegion: process.env.AWS_REGION,
-  awsAccessKeyId: process.env.AWS_ACCESS_KEY_ID,
-  awsSecretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-  awsSessionToken: process.env.AWS_SESSION_TOKEN,
-  bedrockModelId: process.env.BEDROCK_MODEL_ID || 'us.anthropic.claude-3-5-sonnet-20241022-v2:0',
-  enableLLM: true,
+// Build TokenExchangeConfig from environment variables
+const buildTokenExchangeConfig = (): TokenExchangeConfig | undefined => {
+  const mcpAuthServer = process.env.MCP_AUTHORIZATION_SERVER;
+  const mcpAuthServerTokenEndpoint = process.env.MCP_AUTHORIZATION_SERVER_TOKEN_ENDPOINT;
+  const oktaDomain = process.env.OKTA_DOMAIN;
+  const agentId = process.env.AI_AGENT_ID;
+  const privateKeyFile = process.env.AI_AGENT_PRIVATE_KEY_FILE;
+  const privateKeyKid = process.env.AI_AGENT_PRIVATE_KEY_KID;
+  const agentScopes = process.env.AI_AGENT_TODO_MCP_SERVER_SCOPES_TO_REQUEST;
+
+  if (mcpAuthServer && mcpAuthServerTokenEndpoint && oktaDomain && agentId && privateKeyFile && privateKeyKid && agentScopes) {
+    return {
+      authorizationServer: mcpAuthServer,
+      authorizationServerTokenEndpoint: mcpAuthServerTokenEndpoint,
+      oktaDomain,
+      clientId: agentId,
+      privateKeyFile,
+      privateKeyKid,
+      agentScopes,
+    };
+  }
+  return undefined;
 };
+
+// Build agentConfig using validated LLM configuration
+const agentConfig: Omit<AgentConfig, 'idToken' | 'userContext'> = llmConfig.llmProvider === 'anthropic'
+  ? {
+      mcpServerUrl: llmConfig.mcpServerUrl,
+      name: 'agent0',
+      version: '1.0.0',
+      tokenExchange: buildTokenExchangeConfig(),
+      anthropicApiKey: llmConfig.anthropicApiKey,
+      anthropicModel: llmConfig.anthropicModel,
+      enableLLM: true,
+    }
+  : {
+      mcpServerUrl: llmConfig.mcpServerUrl,
+      name: 'agent0',
+      version: '1.0.0',
+      tokenExchange: buildTokenExchangeConfig(),
+      awsRegion: llmConfig.awsRegion,
+      awsAccessKeyId: llmConfig.awsAccessKeyId,
+      awsSecretAccessKey: llmConfig.awsSecretAccessKey,
+      awsSessionToken: llmConfig.awsSessionToken,
+      bedrockModelId: llmConfig.bedrockModelId,
+      enableLLM: true,
+    };
 
 export function getAgentForUserContext(idToken: string, userContext: UserContext): Agent {
   return new Agent({
@@ -109,7 +279,7 @@ export async function disconnectAll(): Promise<void> {
 
 export class Agent {
   private client: Client;
-  private transport: SSEClientTransport | null = null;
+  private transport: StreamableHTTPClientTransport | null = null;
   private config: AgentConfig;
   private isConnected = false;
   private availableTools: any[] = [];
@@ -119,7 +289,6 @@ export class Agent {
     role: 'user' | 'assistant';
     content: string | Array<any>;
   }> = [];
-  private accessToken: string | null = null;
   private tokenExchangeHandler: TokenExchangeHandler | null = null;
 
   constructor(config: AgentConfig) {
@@ -136,10 +305,9 @@ export class Agent {
       }
     );
 
-    // Initialize Token Exchange if configured
-    const tokenExchangeConfig = createTokenExchangeConfig();
-    if (tokenExchangeConfig) {
-      this.tokenExchangeHandler = new TokenExchangeHandler(tokenExchangeConfig);
+    // Initialize Token Exchange Handler if configured
+    if (config.tokenExchange) {
+      this.tokenExchangeHandler = new TokenExchangeHandler(config.tokenExchange);
     }
 
     // Initialize LLM client - Priority: Anthropic Direct > AWS Bedrock
@@ -178,30 +346,36 @@ export class Agent {
       return false;
     }
 
-    if (!this.accessToken)  {
-      console.warn('⚠️ No access token set. MCP connection not yet viable. Need to perform a token exchange first.');
-      const token = await this.tokenExchangeHandler?.exchangeToken(this.config.idToken);
-      console.log(' ✅ Got an access token for the MCP server via XAA token exchange.');
-      if (token && token.access_token) {
-        this.setAccessToken(token.access_token);
-      } else {
-        console.error('❌ Token exchange failed. Cannot connect to MCP server without access token.');
-        return false;
-      }
+    if (!this.tokenExchangeHandler) {
+      console.error('❌ Token exchange not configured. Cannot connect to MCP server.');
+      return false;
     }
 
     try {
       console.log('🔌 Connecting to MCP server...');
       console.log(`   Server: ${this.config.mcpServerUrl}`);
+      console.log('   Performing token exchange: ID Token → ID-JAG → MCP Access Token');
 
-      this.transport = new SSEClientTransport(
-        new URL(`${this.config.mcpServerUrl}/sse`),
+      // Perform token exchange to get MCP access token
+      const tokenResult = await this.tokenExchangeHandler.exchangeToken(this.config.idToken);
+
+      if (!tokenResult.success || !tokenResult.access_token) {
+        throw new Error('Token exchange failed or did not return access token');
+      }
+
+      console.log('✅ Token exchange successful');
+      console.log(`⏰ Token expires in: ${tokenResult.expires_in}s`);
+
+      // Create transport with access token in Authorization header
+      this.transport = new StreamableHTTPClientTransport(
+        new URL(this.config.mcpServerUrl),
         {
           requestInit: {
             headers: {
-              'Authorization': `Bearer ${this.accessToken || ''}`,
+              'Authorization': `Bearer ${tokenResult.access_token}`
             }
-          }
+          },
+          
         }
       );
 
@@ -279,21 +453,16 @@ export class Agent {
   }
 
   // ============================================================================
-  // Access Token Management
+  // Auth Provider Management
   // ============================================================================
 
-  setAccessToken(token: string): void {
-    this.accessToken = token;
-    console.log('🔑 Access token set for MCP tool calls');
-  }
-
-  clearAccessToken(): void {
-    this.accessToken = null;
-    console.log('🔓 Access token cleared');
-  }
-
-  hasAccessToken(): boolean {
-    return this.accessToken !== null;
+  /**
+   * Update the ID token (useful when session is refreshed)
+   * Note: Will need to reconnect to MCP server with new token
+   */
+  updateIdToken(newIdToken: string): void {
+    this.config.idToken = newIdToken;
+    console.log('🔑 ID token updated - reconnect to MCP server for new access token');
   }
 
   getAvailableTools(): any[] {

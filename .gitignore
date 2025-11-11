@@ -3,6 +3,11 @@ dist/
 build/
 .env
 .env.local
+.env.backup
+.env.app
+.env.agent
+.env.mcp
+.env.*.backup
 .DS_Store
 *.log
 coverage/
@@ -15,3 +20,7 @@ packages/*/dist/
 packages/*/build/
 .github/
 *.pem
+
+# Okta bootstrap state
+.okta-bootstrap-state.json
+okta-config-report.md

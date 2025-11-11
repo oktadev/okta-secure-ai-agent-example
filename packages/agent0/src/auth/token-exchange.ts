@@ -14,9 +14,9 @@ export interface TokenExchangeConfig {
   clientId: string;
   privateKeyFile: string;
   privateKeyKid: string;
-  targetAudience: string;
-  tokenEndpoint: string;
-  resourceTokenEndpoint?: string;
+  authorizationServer: string;
+  authorizationServerTokenEndpoint: string;
+  agentScopes: string;
 }
 
 // ============================================================================
@@ -82,14 +82,13 @@ export class TokenExchangeHandler {
     formData.append('requested_token_type', 'urn:ietf:params:oauth:token-type:id-jag');
     formData.append('subject_token', idToken);
     formData.append('subject_token_type', 'urn:ietf:params:oauth:token-type:id_token');
-    formData.append('audience', this.config.targetAudience);
-    // formData.append('client_id', this.config.clientId);
-    formData.append('scope', 'read:todo0');
+    formData.append('audience', this.config.authorizationServer);
+    formData.append('scope', this.config.agentScopes);
     formData.append('client_assertion_type', 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer');
     formData.append('client_assertion', clientAssertion);
 
     console.log(`🔄 Step 1: Exchanging ID token for ID-JAG token...`);
-    console.log(`📍 Audience: ${this.config.targetAudience}`);
+    console.log(`📍 Audience: ${this.config.authorizationServer}`);
     console.log(`🆔 Client ID: ${this.config.clientId}`);
 
     const response = await axios.post(
@@ -118,13 +117,13 @@ export class TokenExchangeHandler {
     expires_in: number;
     scope?: string;
   }> {
-    const resourceTokenEndpoint = this.config.resourceTokenEndpoint ||
-      `https://${this.config.oktaDomain}/oauth2/default/v1/token`;
+    const authorizationServer = this.config.authorizationServer;
+    const authorizationServerTokenEndpoint = this.config.authorizationServerTokenEndpoint;
 
     console.log(`🔄 Step 2: Exchanging ID-JAG for Access Token at Resource Server...`);
-    console.log(`📍 Resource Token Endpoint: ${resourceTokenEndpoint}`);
+    console.log(`📍 MCP authorization server: ${authorizationServer}`);
 
-    const clientAssertion = this.createClientAssertion(resourceTokenEndpoint);
+    const clientAssertion = this.createClientAssertion(authorizationServerTokenEndpoint);
 
     const resourceTokenForm = new URLSearchParams();
     resourceTokenForm.append('grant_type', 'urn:ietf:params:oauth:grant-type:jwt-bearer');
@@ -133,7 +132,7 @@ export class TokenExchangeHandler {
     resourceTokenForm.append('client_assertion', clientAssertion);
 
     const response = await axios.post(
-      resourceTokenEndpoint,
+      authorizationServerTokenEndpoint,
       resourceTokenForm,
       {
         headers: {
@@ -251,31 +250,3 @@ export class TokenExchangeHandler {
   }
 }
 
-// ============================================================================
-// Configuration Helper
-// ============================================================================
-
-export function createTokenExchangeConfig(): TokenExchangeConfig | null {
-  const targetAudience = process.env.TARGET_SERVICE_AUDIENCE;
-  const tokenEndpoint = process.env.OKTA_TOKEN_ENDPOINT;
-  const clientId = process.env.AI_AGENT_ID;
-  const oktaDomain = process.env.OKTA_DOMAIN;
-  const privateKeyFile = process.env.OKTA_CC_PRIVATE_KEY_FILE;
-  const privateKeyKid = process.env.OKTA_PRIVATE_KEY_KID;
-
-  if (!targetAudience || !tokenEndpoint || !clientId || !oktaDomain || !privateKeyFile || !privateKeyKid) {
-    console.warn('⚠️  Cross-app access not fully configured. Missing required environment variables.');
-    console.warn('   Required: TARGET_SERVICE_AUDIENCE, OKTA_TOKEN_ENDPOINT, AI_AGENT_ID, OKTA_DOMAIN, OKTA_CC_PRIVATE_KEY_FILE, OKTA_PRIVATE_KEY_KID');
-    return null;
-  }
-
-  return {
-    oktaDomain,
-    clientId,
-    privateKeyFile,
-    privateKeyKid,
-    targetAudience,
-    tokenEndpoint,
-    resourceTokenEndpoint: process.env.RESOURCE_TOKEN_ENDPOINT,
-  };
-}
