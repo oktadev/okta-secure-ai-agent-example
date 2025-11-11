@@ -146,8 +146,9 @@ router.post('/logout', async (req, res) => {
     
     const idToken = (req.session as any).id_token;
     
-    // Build end session URL using openid-client
+    // Build end session URL using openid-client with client_id parameter
     const logoutUrl = client.endSessionUrl({
+      client_id: oktaClientId,
       id_token_hint: idToken,
       post_logout_redirect_uri: 'http://localhost:5001/',
     });

@@ -233,8 +233,9 @@ export class OktaAuthHelper {
         const client = await this.getClient();
         const idToken = (req.session as any)?.idToken;
 
-        // Build end session URL using openid-client
+        // Build end session URL using openid-client with client_id parameter
         const logoutUrl = client.endSessionUrl({
+          client_id: this.config.clientId,
           id_token_hint: idToken,
           post_logout_redirect_uri: `http://localhost:${port}`,
         });
