@@ -1,6 +1,6 @@
 // okta-auth.ts - Okta Authentication and Session Management
 import { Request, Response, NextFunction } from 'express';
-import { OktaAuth } from '@okta/okta-auth-js';
+import { Issuer, generators, Client } from 'openid-client';
 import session from 'express-session';
 
 // Extend Express session type
@@ -9,10 +9,9 @@ declare module 'express-session' {
     idToken?: string;
     accessToken?: string;
     userInfo?: any;
-    oktaMeta?: {
+    pkce?: {
+      code_verifier: string;
       state: string;
-      codeVerifier: string;
-      codeChallenge: string;
     };
   }
 }
@@ -53,23 +52,42 @@ export function createSessionMiddleware(sessionSecret: string) {
 // ============================================================================
 
 export class OktaAuthHelper {
-  private oktaAuth: OktaAuth;
+  private client: Client | null = null;
   private config: OktaConfig;
+  private issuerUrl: string;
 
   constructor(config: OktaConfig) {
     this.config = config;
-    this.oktaAuth = new OktaAuth({
-      issuer: `https://${config.domain}`,
-      clientId: config.clientId,
-      clientSecret: config.clientSecret,
-      redirectUri: config.redirectUri,
-      scopes: ['openid', 'profile', 'email'],
-      pkce: true, // Enable PKCE for proper flow
-      tokenManager: {
-        storage: 'memory',
-      },
-    });
+    this.issuerUrl = `https://${config.domain}`;
+    this.initializeClient();
     console.log('🔐 Okta authentication configured');
+  }
+
+  private async initializeClient(): Promise<void> {
+    try {
+      const issuer = await Issuer.discover(this.issuerUrl);
+      
+      this.client = new issuer.Client({
+        client_id: this.config.clientId,
+        client_secret: this.config.clientSecret,
+        redirect_uris: [this.config.redirectUri],
+        response_types: ['code'],
+      });
+      
+      console.log('✅ OpenID Client initialized successfully');
+    } catch (error: any) {
+      console.error('❌ Failed to initialize OpenID Client:', error.message);
+    }
+  }
+
+  private async getClient(): Promise<Client> {
+    if (!this.client) {
+      await this.initializeClient();
+      if (!this.client) {
+        throw new Error('OpenID client not initialized');
+      }
+    }
+    return this.client;
   }
 
   // ============================================================================
@@ -113,27 +131,27 @@ export class OktaAuthHelper {
 
   async handleLogin(req: Request, res: Response): Promise<void> {
     try {
-      // Generate code verifier and challenge for PKCE
-      const tokenParams = await this.oktaAuth.token.prepareTokenParams();
-      const meta = {
-        state: Math.random().toString(36).substring(7),
-        codeVerifier: tokenParams.codeVerifier || '',
-        codeChallenge: tokenParams.codeChallenge || '',
-      };
+      const client = await this.getClient();
 
-      // Store meta in session for callback
-      (req.session as any).oktaMeta = meta;
+      // Generate PKCE parameters using openid-client generators
+      const code_verifier = generators.codeVerifier();
+      const code_challenge = generators.codeChallenge(code_verifier);
+      const state = generators.state();
 
-      const authorizeUrl = `https://${this.config.domain}/oauth2/v1/authorize?` +
-        `client_id=${this.config.clientId}&` +
-        `response_type=code&` +
-        `scope=openid%20profile%20email&` +
-        `redirect_uri=${encodeURIComponent(this.config.redirectUri)}&` +
-        `state=${meta.state}&` +
-        `code_challenge_method=S256&` +
-        `code_challenge=${meta.codeChallenge}`;
+      // Store PKCE parameters in session
+      req.session.pkce = { code_verifier, state };
 
-      res.redirect(authorizeUrl);
+      // Build authorization URL with PKCE using openid-client
+      const authorizationUrl = client.authorizationUrl({
+        scope: 'openid profile email',
+        code_challenge,
+        code_challenge_method: 'S256',
+        state,
+        redirect_uri: this.config.redirectUri,
+      });
+
+      console.log('🔐 Redirecting to:', authorizationUrl);
+      res.redirect(authorizationUrl);
     } catch (error: any) {
       console.error('Login redirect error:', error);
       res.status(500).json({ error: 'Failed to initiate login' });
@@ -145,7 +163,7 @@ export class OktaAuthHelper {
   // ============================================================================
 
   async handleCallback(req: Request, res: Response): Promise<void> {
-    const { code, error, error_description, state } = req.query;
+    const { code, error, error_description } = req.query;
 
     if (error) {
       console.error('Okta authentication error:', error, error_description);
@@ -159,39 +177,40 @@ export class OktaAuthHelper {
     }
 
     try {
-      // Get stored meta from session
-      const oktaMeta = (req.session as any).oktaMeta;
-      if (!oktaMeta || !oktaMeta.codeVerifier) {
-        console.error('No code verifier found in session');
+      const client = await this.getClient();
+
+      // Get PKCE parameters from session
+      const { pkce } = req.session as any;
+
+      if (!pkce || !pkce.code_verifier || !pkce.state) {
+        console.error('Missing PKCE parameters in session');
         res.redirect('/?error=missing_verifier');
         return;
       }
 
-      // Verify state matches
-      if (oktaMeta.state !== state) {
-        console.error('State mismatch');
-        res.redirect('/?error=state_mismatch');
-        return;
-      }
+      // Build callback parameters from the request
+      const params = client.callbackParams(req);
 
-      // Exchange authorization code for tokens
-      const tokenResponse = await this.oktaAuth.token.exchangeCodeForTokens({
-        authorizationCode: code as string,
-        codeVerifier: oktaMeta.codeVerifier,
-      });
+      // Exchange authorization code for tokens using openid-client
+      const tokenSet = await client.callback(
+        this.config.redirectUri,
+        params,
+        {
+          code_verifier: pkce.code_verifier,
+          state: pkce.state,
+        }
+      );
 
-      const { idToken, accessToken } = tokenResponse.tokens;
-
-      if (idToken && accessToken) {
+      if (tokenSet.access_token && tokenSet.id_token) {
         // Store tokens in session
-        (req.session as any).idToken = idToken.idToken;
-        (req.session as any).accessToken = accessToken.accessToken;
-        (req.session as any).userInfo = idToken.claims;
+        (req.session as any).idToken = tokenSet.id_token;
+        (req.session as any).accessToken = tokenSet.access_token;
+        (req.session as any).userInfo = tokenSet.claims();
 
-        // Clear the meta data
-        delete (req.session as any).oktaMeta;
+        // Clear PKCE parameters
+        delete (req.session as any).pkce;
 
-        console.log('✅ User authenticated:', idToken.claims.email || idToken.claims.sub);
+        console.log('✅ User authenticated:', tokenSet.claims().email || tokenSet.claims().sub);
 
         // Redirect to main page
         res.redirect('/');
@@ -209,17 +228,29 @@ export class OktaAuthHelper {
   // ============================================================================
 
   handleLogout(port: number) {
-    return (req: Request, res: Response) => {
-      const idToken = (req.session as any)?.idToken;
-      req.session.destroy((err) => {
-        if (err) {
-          console.error('Session destruction error:', err);
-        }
-        const logoutUrl = `https://${this.config.domain}/oauth2/v1/logout?` +
-          `id_token_hint=${idToken || ''}&` +
-          `post_logout_redirect_uri=${encodeURIComponent('http://localhost:' + port)}`;
-        res.redirect(logoutUrl);
-      });
+    return async (req: Request, res: Response) => {
+      try {
+        const client = await this.getClient();
+        const idToken = (req.session as any)?.idToken;
+
+        // Build end session URL using openid-client
+        const logoutUrl = client.endSessionUrl({
+          id_token_hint: idToken,
+          post_logout_redirect_uri: `http://localhost:${port}`,
+        });
+
+        req.session.destroy((err) => {
+          if (err) {
+            console.error('Session destruction error:', err);
+          }
+          res.redirect(logoutUrl);
+        });
+      } catch (error: any) {
+        console.error('Logout error:', error);
+        req.session.destroy((err) => {
+          res.redirect('/');
+        });
+      }
     };
   }
 
