@@ -275,7 +275,7 @@ server.tool(
 // ============================================================================
 
 async function bootstrap(): Promise<void> {
-  const MCP_PORT = process.env.MCP_PORT || 5002;
+  const MCP_PORT = process.env.MCP_PORT || 3001;
   const app = express();
   const transports = new Map<string, SSEServerTransport>();
 

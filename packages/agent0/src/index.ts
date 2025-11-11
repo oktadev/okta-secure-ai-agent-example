@@ -20,7 +20,7 @@ async function bootstrap(): Promise<void> {
   // ============================================================================
 
   const port = parseInt(process.env.PORT || '3000', 10);
-  const sessionSecret = process.env.SESSION_SECRET || 'agent0.sid';
+  const sessionSecret = process.env.SESSION_SECRET || 'default-secret-change-in-production';
 
   const resourceServerConfig: ResourceServerConfig = {
     port,

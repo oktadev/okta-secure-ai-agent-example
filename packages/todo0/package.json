@@ -19,7 +19,7 @@
     "@modelcontextprotocol/sdk": "^1.19.1",
     "@okta/jwt-verifier": "^4.0.2",
     "@okta/okta-auth-js": "^7.14.0",
-    "@prisma/client": "^6.18.0",
+    "@prisma/client": "^6.16.3",
     "axios": "^1.12.2",
     "body-parser": "^2.2.0",
     "dotenv": "^17.2.3",
