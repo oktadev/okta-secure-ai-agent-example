@@ -11,6 +11,11 @@
 
 </div >
 
+## Overview
+
+This monorepo demonstrates an agentic application (agent0) that has a secure integration with another application's (todo0) MCP exposed resources.
+
+
 ### Architecture
 
 ```mermaid
