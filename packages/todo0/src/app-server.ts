@@ -103,8 +103,10 @@ declare module 'express-session' {
   interface SessionData {
     access_token?: string;
     id_token?: string;
-    codeVerifier?: string;
-    state?: string;
+    pkce?: {
+      code_verifier: string;
+      state: string;
+    };
   }
 }
 const app = express();

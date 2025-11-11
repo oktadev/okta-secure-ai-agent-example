@@ -20,13 +20,13 @@
     "dotenv": "^17.2.3",
     "express": "4.18.2",
     "express-session": "1.17.3",
-    "id-assert-authz-grant-client": "^0.0.1-security",
     "install": "^0.13.0",
     "jose": "^6.1.0",
     "jsonwebtoken": "^9.0.2",
     "marked": "^16.4.0",
     "npm": "^11.6.2",
     "open": "^10.2.0",
+    "openid-client": "^5.7.1",
     "zod": "^3.22.4"
   },
   "devDependencies": {
