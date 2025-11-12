@@ -251,13 +251,19 @@ If you used `pnpm run bootstrap:okta`, then your .env files are 99% ready to go.
 
 ## Running the demo services
 
-### 7. Start todo0 MCP server
+### 7. Start todo0 application
+
+```sh
+pnpm run start:todo0
+```
+
+### 8. Start todo0 MCP server
 
 ```sh
 pnpm run start:mcp
 ```
 
-### 8. Start agent0 application
+### 9. Start agent0 application
 
 ```sh
 pnpm run start:agent0
