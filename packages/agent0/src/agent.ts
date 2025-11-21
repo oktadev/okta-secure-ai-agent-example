@@ -299,9 +299,7 @@ export class Agent {
         version: config.version,
       },
       {
-        capabilities: {
-          tools: {},
-        },
+        capabilities: {},
       }
     );
 
