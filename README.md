@@ -127,13 +127,22 @@ graph TB
 
 Before running the bootstrap script, you'll need:
 
-1. **Okta Developer Account**
+1. **Node.js 18.12 or later**
+   - Download from [https://nodejs.org/](https://nodejs.org/)
+   - Verify installation: `node --version`
+
+2. **pnpm 8 or later**
+   - Install via npm: `npm install -g pnpm`
+   - Or via standalone script: `curl -fsSL https://get.pnpm.io/install.sh | sh -`
+   - Verify installation: `pnpm --version`
+
+3. **Okta Developer Account**
    - Sign up for free at [https://developer.okta.com/signup/](https://developer.okta.com/signup/)
 
-2. **Okta API Token** with admin permissions
+4. **Okta API Token** with admin permissions
    - Create via: Okta Admin Console → Security → API → Tokens → Create Token
 
-3. **Anthropic API Key** (optional, for LLM integration)
+5. **Anthropic API Key** (optional, for LLM integration)
    - Sign up at [https://console.anthropic.com/](https://console.anthropic.com/)
    - Alternative: Configure AWS Bedrock credentials instead
    - **Note** These will need to be configured in packages/agent0/.env.agent at a later step.
