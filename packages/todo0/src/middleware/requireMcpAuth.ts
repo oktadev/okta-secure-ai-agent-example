@@ -161,6 +161,7 @@ export function createRequireMcpAuth(config: McpAuthConfig) {
       return { valid: true };
     } catch (error) {
       console.log('✗ Token verification failed');
+      console.error('Token verification error details:', error);
       return { valid: false };
     }
   }
