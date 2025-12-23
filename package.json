@@ -30,7 +30,9 @@
     "dev": "pnpm run start:all",
     "bootstrap:okta": "tsx scripts/bootstrap-okta-tenant.ts",
     "validate:okta": "tsx scripts/validate-okta-config.ts",
+    "validate:opa": "tsx scripts/validate-opa-secrets.ts",
     "rollback:okta": "tsx scripts/rollback-okta-config.ts",
+    "bootstrap:opa": "tsx scripts/setup-opa-secrets.ts",
     "typecheck:scripts": "tsc --project scripts/tsconfig.json --noEmit"
   },
   "keywords": [],

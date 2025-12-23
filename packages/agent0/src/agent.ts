@@ -71,9 +71,15 @@ function extractScopeChallenge(source: any): ScopeChallenge | null {
 
 import { Request } from 'express';
 import * as dotenv from 'dotenv';
+import {
+  isOPAConfigured,
+  fetchLLMCredentialsFromOPA,
+} from './secrets/opa-secrets.js';
 
 // Load environment variables for agent
 dotenv.config({ path: path.resolve(__dirname, '../.env.agent') });
+// Load OPA configuration (if present)
+dotenv.config({ path: path.resolve(__dirname, '../.env.opa') });
 
 // ============================================================================
 // Agent LLM Configuration Types
@@ -207,8 +213,106 @@ function validateAgentLLMEnv(): AgentLLMConfig {
   }
 }
 
-// Validate and get typed LLM configuration
-const llmConfig = validateAgentLLMEnv();
+// ============================================================================
+// LLM Configuration Initialization
+// ============================================================================
+
+// Module-level state for LLM configuration
+let llmConfig: AgentLLMConfig | null = null;
+let llmConfigInitialized = false;
+let llmConfigSource: 'opa' | 'env' | 'none' = 'none';
+
+/**
+ * Initialize LLM configuration from OPA or environment variables
+ * OPA is tried first if configured, with fallback to env vars
+ */
+export async function initializeLLMConfig(): Promise<void> {
+  if (llmConfigInitialized) {
+    return;
+  }
+
+  console.log('\n Initializing LLM configuration...');
+
+  // Try OPA first if configured
+  if (isOPAConfigured()) {
+    console.log(' OPA secret management detected, attempting to fetch credentials...');
+    try {
+      const opaCredentials = await fetchLLMCredentialsFromOPA();
+
+      if (opaCredentials) {
+        // Convert OPA credentials to AgentLLMConfig format
+        if (opaCredentials.provider === 'anthropic') {
+          llmConfig = {
+            mcpServerUrl: process.env.MCP_SERVER_URL || '',
+            llmProvider: 'anthropic',
+            anthropicApiKey: opaCredentials.apiKey,
+            anthropicModel: opaCredentials.model,
+          };
+        } else {
+          llmConfig = {
+            mcpServerUrl: process.env.MCP_SERVER_URL || '',
+            llmProvider: 'bedrock',
+            awsRegion: opaCredentials.awsRegion,
+            awsAccessKeyId: opaCredentials.awsAccessKeyId,
+            awsSecretAccessKey: opaCredentials.awsSecretAccessKey,
+            awsSessionToken: opaCredentials.awsSessionToken,
+            bedrockModelId: opaCredentials.bedrockModelId,
+          };
+        }
+        llmConfigSource = 'opa';
+        llmConfigInitialized = true;
+        console.log(' LLM credentials loaded from OPA');
+        return;
+      }
+    } catch (error: any) {
+      console.warn(' Failed to fetch credentials from OPA:', error.message);
+      console.warn(' Falling back to environment variables...');
+    }
+  }
+
+  // Fall back to environment variables
+  try {
+    llmConfig = validateAgentLLMEnv();
+    llmConfigSource = 'env';
+    llmConfigInitialized = true;
+    console.log(' LLM credentials loaded from environment variables');
+  } catch (error) {
+    llmConfigInitialized = true;
+    llmConfigSource = 'none';
+    console.error(' No LLM credentials available');
+    throw error;
+  }
+}
+
+/**
+ * Get the current LLM configuration source
+ */
+export function getLLMConfigSource(): 'opa' | 'env' | 'none' {
+  return llmConfigSource;
+}
+
+/**
+ * Check if LLM configuration has been initialized
+ */
+export function isLLMConfigInitialized(): boolean {
+  return llmConfigInitialized;
+}
+
+// Try synchronous initialization at module load (for backwards compatibility)
+// This will only work if env vars are set and OPA is not configured
+try {
+  if (!isOPAConfigured()) {
+    llmConfig = validateAgentLLMEnv();
+    llmConfigSource = 'env';
+    llmConfigInitialized = true;
+  }
+} catch {
+  // If sync init fails and OPA is configured, that's fine - will init async later
+  // If sync init fails and OPA is not configured, we have a problem
+  if (!isOPAConfigured()) {
+    console.error('LLM configuration failed - no env vars or OPA configured');
+  }
+}
 
 // ============================================================================
 // Agent Configuration
@@ -268,9 +372,14 @@ const buildTokenExchangeConfig = (): TokenExchangeConfig | undefined => {
   return undefined;
 };
 
-// Build agentConfig using validated LLM configuration
-const agentConfig: Omit<AgentConfig, 'idToken' | 'userContext'> = llmConfig.llmProvider === 'anthropic'
-  ? {
+// Build agentConfig dynamically from current LLM configuration
+function buildAgentConfig(): Omit<AgentConfig, 'idToken' | 'userContext'> | null {
+  if (!llmConfig) {
+    return null;
+  }
+
+  if (llmConfig.llmProvider === 'anthropic') {
+    return {
       mcpServerUrl: llmConfig.mcpServerUrl,
       name: 'agent0',
       version: '1.0.0',
@@ -278,8 +387,9 @@ const agentConfig: Omit<AgentConfig, 'idToken' | 'userContext'> = llmConfig.llmP
       anthropicApiKey: llmConfig.anthropicApiKey,
       anthropicModel: llmConfig.anthropicModel,
       enableLLM: true,
-    }
-  : {
+    };
+  } else {
+    return {
       mcpServerUrl: llmConfig.mcpServerUrl,
       name: 'agent0',
       version: '1.0.0',
@@ -291,8 +401,18 @@ const agentConfig: Omit<AgentConfig, 'idToken' | 'userContext'> = llmConfig.llmP
       bedrockModelId: llmConfig.bedrockModelId,
       enableLLM: true,
     };
+  }
+}
 
-export function getAgentForUserContext(idToken: string, userContext: UserContext): Agent {
+export async function getAgentForUserContext(idToken: string, userContext: UserContext): Promise<Agent> {
+  // Ensure LLM config is initialized (will be a no-op if already initialized)
+  await initializeLLMConfig();
+
+  const agentConfig = buildAgentConfig();
+  if (!agentConfig) {
+    throw new Error('LLM configuration not available. Cannot create agent.');
+  }
+
   return new Agent({
     ...agentConfig,
     idToken,
@@ -314,12 +434,12 @@ export async function getAgentForSession (req: Request): Promise<Agent | null> {
   const subject = userInfo.sub;
 
   const existingAgent = subjectToAgent.get(subject);
-  
+
   if (existingAgent) {
     return existingAgent;
   }
 
-  const agent = getAgentForUserContext(
+  const agent = await getAgentForUserContext(
     idToken, userInfo
   );
 

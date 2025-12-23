@@ -10,6 +10,7 @@ build/
 .env.mcp
 .env.opa
 .env.*.backup
+.env.opa
 .DS_Store
 *.log
 coverage/
