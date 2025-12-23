@@ -73,7 +73,7 @@ function registerTools(verifyAccessTokenWithScopes: (authHeader: string, scopes:
                   error_description: `Missing required scopes: ${authResult.missingScopes.join(', ')}`,
                   required_scopes: authResult.missingScopes,
                   // Include WWW-Authenticate header value for clients that can parse it
-                  www_authenticate: `Bearer error="insufficient_scope", scope="${scopes.join(' ')}"`,
+                  www_authenticate: `Bearer error="insufficient_scope", scope="${authResult.missingScopes.join(' ')}"`,
                 })
               }],
               isError: true,
