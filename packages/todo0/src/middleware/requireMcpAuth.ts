@@ -6,6 +6,61 @@ export interface McpAuthConfig {
   mcpExpectedAudience: string;
 }
 
+// ============================================================================
+// Scope Challenge Helper (MCP Authorization Best Practices)
+// ============================================================================
+
+/**
+ * Build WWW-Authenticate header for scope challenge per MCP spec
+ * @param requiredScopes - Scopes required for the operation
+ * @param resourceMetadataUrl - URL to the OAuth protected resource metadata
+ * @param errorDescription - Human-readable error description
+ */
+export function buildScopeChallengeHeader(
+  requiredScopes: string[],
+  resourceMetadataUrl?: string,
+  errorDescription?: string
+): string {
+  let header = `Bearer error="insufficient_scope", scope="${requiredScopes.join(' ')}"`;
+
+  if (resourceMetadataUrl) {
+    header += `, resource_metadata="${resourceMetadataUrl}"`;
+  }
+
+  if (errorDescription) {
+    header += `, error_description="${errorDescription}"`;
+  }
+
+  return header;
+}
+
+/**
+ * Send 403 response with WWW-Authenticate header for scope challenge
+ */
+export function sendScopeChallengeResponse(
+  res: Response,
+  requiredScopes: string[],
+  resourceMetadataUrl?: string,
+  errorDescription?: string
+): Response {
+  const wwwAuthHeader = buildScopeChallengeHeader(
+    requiredScopes,
+    resourceMetadataUrl,
+    errorDescription
+  );
+
+  console.log(`🔐 Sending scope challenge: ${wwwAuthHeader}`);
+
+  return res
+    .status(403)
+    .set('WWW-Authenticate', wwwAuthHeader)
+    .json({
+      error: 'insufficient_scope',
+      error_description: errorDescription || 'Additional scopes required',
+      required_scopes: requiredScopes,
+    });
+}
+
 export function createRequireMcpAuth(config: McpAuthConfig) {
   const { mcpOktaIssuer, mcpExpectedAudience } = config;
 
@@ -50,11 +105,13 @@ export function createRequireMcpAuth(config: McpAuthConfig) {
     console.log('   Client ID:', jwt.claims.cid);
 
     if (!verifyScopesClaim(jwt.claims, ['mcp:connect'])) {
-      console.log('✗ Missing required scopes');
-      return res.status(403).json({
-        error: 'Forbidden',
-        message: 'Insufficient scope'
-      });
+      console.log('✗ Missing required scope: mcp:connect');
+      return sendScopeChallengeResponse(
+        res,
+        ['mcp:connect'],
+        undefined,
+        'mcp:connect scope required for MCP connection'
+      );
     }
 
     // Attach verified claims to request
@@ -70,28 +127,62 @@ export function createRequireMcpAuth(config: McpAuthConfig) {
   }
   }
 
-  async function verifyAccessTokenWithScopes(authorizationHeader: string, expectedScopes: string[]): Promise<boolean> {
+  /**
+   * Verify access token and check for required scopes
+   * Returns object with success status and missing scopes if any
+   */
+  async function verifyAccessTokenWithScopes(
+    authorizationHeader: string,
+    expectedScopes: string[]
+  ): Promise<{ valid: boolean; missingScopes?: string[] }> {
     console.log('🔍 Verifying MCP access token with scopes:', expectedScopes);
 
     const match = authorizationHeader.match(/^Bearer (.+)$/);
 
     if (!match) {
       console.log('✗ No Bearer token found in Authorization header for MCP connection');
-      return false;
+      return { valid: false };
     }
 
     const accessToken = match[1];
     console.log('🔍 Verifying MCP access token...');
 
-    const jwt = await oktaJwtVerifier.verifyAccessToken(
-      accessToken,
-      mcpExpectedAudience
-    );
+    try {
+      const jwt = await oktaJwtVerifier.verifyAccessToken(
+        accessToken,
+        mcpExpectedAudience
+      );
 
-    return verifyScopesClaim(jwt.claims, expectedScopes);
+      const missingScopes = findMissingScopes(jwt.claims, expectedScopes);
+      if (missingScopes.length > 0) {
+        return { valid: false, missingScopes };
+      }
+
+      return { valid: true };
+    } catch (error) {
+      console.log('✗ Token verification failed');
+      return { valid: false };
+    }
   }
 
   return { requireMcpAuth, verifyAccessTokenWithScopes };
+}
+
+/**
+ * Find missing scopes from claims
+ */
+function findMissingScopes(claims: OktaJwtVerifier.JwtClaims, expectedScopes: string[]): string[] {
+  const missing: string[] = [];
+  if (claims.scp) {
+    for (const expectedScope of expectedScopes) {
+      if (!claims.scp.includes(expectedScope)) {
+        missing.push(expectedScope);
+      }
+    }
+  } else {
+    return expectedScopes; // All scopes are missing
+  }
+  return missing;
 }
 
 function verifyScopesClaim(claims: OktaJwtVerifier.JwtClaims, expectedScopes: string[]): boolean {

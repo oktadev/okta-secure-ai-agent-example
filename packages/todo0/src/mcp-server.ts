@@ -46,7 +46,7 @@ const deleteTodoParams: z.ZodRawShape = {
 /**
  * Register MCP tools with scope-based authorization
  */
-function registerTools(verifyAccessTokenWithScopes: (authHeader: string, scopes: string[]) => Promise<boolean>): void {
+function registerTools(verifyAccessTokenWithScopes: (authHeader: string, scopes: string[]) => Promise<{ valid: boolean; missingScopes?: string[] }>): void {
   const makeProtectedTool = (scopes: string[], cb: (params: any, extra: RequestHandlerExtra<ServerRequest, ServerNotification>) => Promise<any>): ((args: any, extra: RequestHandlerExtra<ServerRequest, ServerNotification>) => Promise<any>) => {
       return async (params: any, extra: RequestHandlerExtra<ServerRequest, ServerNotification>) => {
         if (!extra.requestInfo?.headers.authorization) {
@@ -58,8 +58,29 @@ function registerTools(verifyAccessTokenWithScopes: (authHeader: string, scopes:
         const authorizationHeader = extra.requestInfo?.headers.authorization;
 
         console.log('🔍 Verifying access token for tool execution...');
-        const isValidToken = await verifyAccessTokenWithScopes(authorizationHeader, scopes);
-        if (!isValidToken) {
+        const authResult = await verifyAccessTokenWithScopes(authorizationHeader, scopes);
+
+        if (!authResult.valid) {
+          // Check if this is a scope challenge (missing scopes) vs invalid token
+          if (authResult.missingScopes && authResult.missingScopes.length > 0) {
+            console.log(`🔐 Scope challenge: missing scopes ${authResult.missingScopes.join(', ')}`);
+            // Return scope challenge per MCP spec (as structured error in MCP response)
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  error: 'insufficient_scope',
+                  error_description: `Missing required scopes: ${authResult.missingScopes.join(', ')}`,
+                  required_scopes: authResult.missingScopes,
+                  // Include WWW-Authenticate header value for clients that can parse it
+                  www_authenticate: `Bearer error="insufficient_scope", scope="${scopes.join(' ')}"`,
+                })
+              }],
+              isError: true,
+            };
+          }
+
+          // Invalid or expired token
           return {
             content: [{
               type: 'text',
