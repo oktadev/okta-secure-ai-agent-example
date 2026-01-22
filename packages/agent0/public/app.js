@@ -566,14 +566,21 @@ function addMessageToDOM(text, type = 'assistant', data = null, saveToHistory = 
         });
         contentDiv.innerHTML = html;
     } else {
-        // Render markdown for text messages
+        // Render markdown for text messages (sanitized to prevent XSS)
         if (text) {
             try {
                 // Check if marked is available and use it
                 if (typeof marked !== 'undefined' && marked.parse) {
-                    contentDiv.innerHTML = marked.parse(text);
+                    const rawHtml = marked.parse(text);
+                    // Sanitize with DOMPurify to prevent XSS from LLM responses
+                    contentDiv.innerHTML = typeof DOMPurify !== 'undefined'
+                        ? DOMPurify.sanitize(rawHtml)
+                        : escapeHtml(rawHtml);
                 } else if (typeof window.marked !== 'undefined' && window.marked.parse) {
-                    contentDiv.innerHTML = window.marked.parse(text);
+                    const rawHtml = window.marked.parse(text);
+                    contentDiv.innerHTML = typeof DOMPurify !== 'undefined'
+                        ? DOMPurify.sanitize(rawHtml)
+                        : escapeHtml(rawHtml);
                 } else {
                     // Fallback to plain text
                     contentDiv.textContent = text;
