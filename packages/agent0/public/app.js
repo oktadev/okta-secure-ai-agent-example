@@ -1,4 +1,47 @@
 const API_BASE_URL = 'http://localhost:3000';
+
+// ============================================================================
+// XSS Prevention: HTML Escape Utility
+// ============================================================================
+
+/**
+ * Escape HTML special characters to prevent XSS attacks
+ * @param {string} text - Untrusted user input
+ * @returns {string} - Safe HTML-escaped string
+ */
+function escapeHtml(text) {
+    if (text === null || text === undefined) {
+        return '';
+    }
+    const str = String(text);
+    const htmlEscapes = {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#x27;',
+        '/': '&#x2F;'
+    };
+    return str.replace(/[&<>"'/]/g, char => htmlEscapes[char]);
+}
+
+// ============================================================================
+// Marked.js Configuration (Markdown Parser Security)
+// ============================================================================
+
+/**
+ * Configure marked.js with security options
+ * Note: For full XSS protection, consider adding DOMPurify
+ */
+if (typeof marked !== 'undefined') {
+    marked.setOptions({
+        breaks: true,      // Convert \n to <br>
+        gfm: true,         // GitHub Flavored Markdown
+        headerIds: false,  // Disable header IDs (prevents ID-based attacks)
+        mangle: false      // Don't mangle email addresses
+    });
+}
+
 const statusEl = document.getElementById('status');
 const statusTextEl = document.getElementById('statusText');
 const chatContainer = document.getElementById('chatContainer');
@@ -478,12 +521,12 @@ function addMessageToDOM(text, type = 'assistant', data = null, saveToHistory = 
     
     if (data && data.todos) {
         // Format todos nicely
-        let html = `<strong>Found ${data.count} todo(s):</strong><br><br>`;
+        let html = `<strong>Found ${escapeHtml(data.count)} todo(s):</strong><br><br>`;
         data.todos.forEach((todo, index) => {
             const status = todo.completed ? '✅' : '⬜';
             html += `<div class="todo-item ${todo.completed ? 'completed' : ''}">`;
-            html += `${status} <strong>${todo.title}</strong><br>`;
-            html += `<small>ID: ${todo.id}</small>`;
+            html += `${status} <strong>${escapeHtml(todo.title)}</strong><br>`;
+            html += `<small>ID: ${escapeHtml(todo.id)}</small>`;
             html += `</div>`;
         });
         contentDiv.innerHTML = html;
@@ -492,11 +535,11 @@ function addMessageToDOM(text, type = 'assistant', data = null, saveToHistory = 
         const todo = data.todo;
         const status = todo.completed ? '✅' : '⬜';
         let html = `<div class="todo-item ${todo.completed ? 'completed' : ''}">`;
-        html += `${status} <strong>${todo.title}</strong><br>`;
-        html += `<small>ID: ${todo.id}</small>`;
+        html += `${status} <strong>${escapeHtml(todo.title)}</strong><br>`;
+        html += `<small>ID: ${escapeHtml(todo.id)}</small>`;
         html += `</div>`;
         if (data.message) {
-            html += `<br>${data.message}`;
+            html += `<br>${escapeHtml(data.message)}`;
         }
         contentDiv.innerHTML = html;
     } else if (data && data.toolResults) {
@@ -504,20 +547,20 @@ function addMessageToDOM(text, type = 'assistant', data = null, saveToHistory = 
         let html = '';
         data.toolResults.forEach(tr => {
             if (tr.result.todos) {
-                html += `<strong>Found ${tr.result.count} todo(s):</strong><br><br>`;
+                html += `<strong>Found ${escapeHtml(tr.result.count)} todo(s):</strong><br><br>`;
                 tr.result.todos.forEach((todo) => {
                     const status = todo.completed ? '✅' : '⬜';
                     html += `<div class="todo-item ${todo.completed ? 'completed' : ''}">`;
-                    html += `${status} <strong>${todo.title}</strong><br>`;
-                    html += `<small>ID: ${todo.id}</small>`;
+                    html += `${status} <strong>${escapeHtml(todo.title)}</strong><br>`;
+                    html += `<small>ID: ${escapeHtml(todo.id)}</small>`;
                     html += `</div>`;
                 });
             } else if (tr.result.todo) {
                 const todo = tr.result.todo;
                 const status = todo.completed ? '✅' : '⬜';
                 html += `<div class="todo-item ${todo.completed ? 'completed' : ''}">`;
-                html += `${status} <strong>${todo.title}</strong><br>`;
-                html += `<small>ID: ${todo.id}</small>`;
+                html += `${status} <strong>${escapeHtml(todo.title)}</strong><br>`;
+                html += `<small>ID: ${escapeHtml(todo.id)}</small>`;
                 html += `</div>`;
             }
         });

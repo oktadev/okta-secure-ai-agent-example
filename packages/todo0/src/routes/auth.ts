@@ -124,11 +124,17 @@ router.get('/callback', async (req, res) => {
     // Store tokens in session
     (req.session as any).access_token = tokenSet.access_token;
     (req.session as any).id_token = tokenSet.id_token;
-    
+
+    // Store user claims for user-scoped operations
+    const claims = tokenSet.claims();
+    (req.session as any).userId = claims.sub;
+    (req.session as any).userEmail = claims.email;
+
     // Clear PKCE parameters from session
     delete (req.session as any).pkce;
-    
-    console.log('[AUTH] Tokens stored in session, redirecting to /');
+
+    console.log('[AUTH] Tokens stored in session for user:', claims.sub);
+    console.log('[AUTH] Redirecting to /');
     res.redirect('/');
   } catch (err: any) {
     console.error('[AUTH] Token exchange failed:', err.message);

@@ -103,6 +103,8 @@ declare module 'express-session' {
   interface SessionData {
     access_token?: string;
     id_token?: string;
+    userId?: string;      // User's Okta sub claim for user-scoped operations
+    userEmail?: string;   // User's email for display
     pkce?: {
       code_verifier: string;
       state: string;
