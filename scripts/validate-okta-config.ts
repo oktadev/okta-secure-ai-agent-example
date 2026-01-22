@@ -4,7 +4,6 @@ import ora from 'ora';
 import * as fs from 'fs';
 import * as path from 'path';
 import axios from 'axios';
-import * as jwt from 'jsonwebtoken';
 import * as jose from 'jose';
 
 interface ValidationResult {
@@ -36,32 +35,6 @@ function loadEnvFile(filePath: string): Record<string, string> {
   });
 
   return env;
-}
-
-/**
- * Create a signed JWT for private key JWT authentication
- */
-function createClientAssertion(
-  clientId: string,
-  audience: string,
-  privateKeyPem: string,
-  kid: string
-): string {
-  const now = Math.floor(Date.now() / 1000);
-
-  const payload = {
-    iss: clientId,
-    sub: clientId,
-    aud: audience,
-    jti: Math.random().toString(36).substring(2),
-    exp: now + 300, // 5 minutes
-    iat: now,
-  };
-
-  return jwt.sign(payload, privateKeyPem, {
-    algorithm: 'RS256',
-    keyid: kid,
-  });
 }
 
 
