@@ -32,9 +32,12 @@ export interface OktaConfig {
 // ============================================================================
 
 export function createSessionMiddleware(sessionSecret: string) {
+  if (!sessionSecret || sessionSecret.trim() === '') {
+    throw new Error('SESSION_SECRET is required and cannot be empty');
+  }
   return session({
     name: 'agent0.sid', // Unique session name for agent0 app
-    secret: sessionSecret || 'default-secret-change-in-production',
+    secret: sessionSecret,
     resave: false,
     saveUninitialized: false,
     rolling: true, // Reset maxAge on every response

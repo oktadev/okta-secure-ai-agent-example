@@ -15,6 +15,7 @@ dotenv.config({ path: path.resolve(__dirname, '../.env.app') });
  */
 interface AppServerConfig {
   port: number;
+  sessionSecret: string;
   oktaIssuer: string;
   oktaClientId: string;
   oktaClientSecret: string;
@@ -30,6 +31,7 @@ function validateAppEnv(): AppServerConfig {
 
   // Check required variables
   const requiredVars = [
+    'SESSION_SECRET',
     'OKTA_ISSUER',
     'OKTA_CLIENT_ID',
     'OKTA_CLIENT_SECRET',
@@ -77,6 +79,7 @@ function validateAppEnv(): AppServerConfig {
   // Return typed configuration object
   return {
     port: parseInt(process.env.PORT || '', 10),
+    sessionSecret: process.env.SESSION_SECRET!,
     oktaIssuer: process.env.OKTA_ISSUER!,
     oktaClientId: process.env.OKTA_CLIENT_ID!,
     oktaClientSecret: process.env.OKTA_CLIENT_SECRET!,
@@ -124,7 +127,7 @@ app.use((req, res, next) => {
 
 app.use(session({
   name: 'todo0.sid', // Unique session name for todo0 app
-  secret: 'your-secret-key',
+  secret: config.sessionSecret,
   resave: false,
   saveUninitialized: false,
   rolling: true, // Keep session alive with activity
