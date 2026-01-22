@@ -1,5 +1,7 @@
 // index.ts - Main Entry Point for Agent0
 import path from 'path';
+import fs from 'fs';
+import os from 'os';
 import * as dotenv from 'dotenv';
 import { disconnectAll } from './agent.js';
 import { AppServer } from './app.js';
@@ -20,14 +22,21 @@ async function bootstrap(): Promise<void> {
   // Start the app server
   await appServer.start();
 
-  // Open browser to the UI
+  // Open browser only on first start (skip on restarts)
   const port = appServer.getPort();
-  try {
-    const open = (await (0, eval)("import('open')")).default;
-    console.log(`✅ Opening browser at http://localhost:${port}`);
-    await open(`http://localhost:${port}`);
-  } catch (error) {
-    console.log(`💡 Open your browser to http://localhost:${port}`);
+  const markerFile = path.join(os.tmpdir(), `agent0-browser-opened-${port}`);
+
+  if (!fs.existsSync(markerFile)) {
+    try {
+      const open = (await (0, eval)("import('open')")).default;
+      console.log(`✅ Opening browser at http://localhost:${port}`);
+      await open(`http://localhost:${port}`);
+      fs.writeFileSync(markerFile, '');
+    } catch (error) {
+      console.log(`💡 Open your browser to http://localhost:${port}`);
+    }
+  } else {
+    console.log(`💡 App running at http://localhost:${port}`);
   }
 
   // ============================================================================

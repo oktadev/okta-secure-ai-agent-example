@@ -6,6 +6,62 @@ import jwt from 'jsonwebtoken';
 import axios from 'axios';
 
 // ============================================================================
+// Scope Challenge Types and Parser (MCP Authorization Best Practices)
+// ============================================================================
+
+export interface ScopeChallenge {
+  error: string;
+  scope: string[];
+  resourceMetadata?: string;
+  errorDescription?: string;
+}
+
+/**
+ * Parse WWW-Authenticate header for scope challenges per MCP spec
+ * Example: Bearer error="insufficient_scope", scope="files:read files:write", error_description="..."
+ */
+export function parseScopeChallenge(wwwAuthenticate: string): ScopeChallenge | null {
+  if (!wwwAuthenticate || !wwwAuthenticate.startsWith('Bearer ')) {
+    return null;
+  }
+
+  const params = wwwAuthenticate.substring(7); // Remove "Bearer "
+  const result: ScopeChallenge = {
+    error: '',
+    scope: [],
+  };
+
+  // Parse key="value" pairs
+  const regex = /(\w+)="([^"]*)"/g;
+  let match;
+
+  while ((match = regex.exec(params)) !== null) {
+    const [, key, value] = match;
+    switch (key) {
+      case 'error':
+        result.error = value;
+        break;
+      case 'scope':
+        result.scope = value.split(' ').filter(s => s.length > 0);
+        break;
+      case 'resource_metadata':
+        result.resourceMetadata = value;
+        break;
+      case 'error_description':
+        result.errorDescription = value;
+        break;
+    }
+  }
+
+  // Only return if this is a scope challenge
+  if (result.error === 'insufficient_scope' && result.scope.length > 0) {
+    return result;
+  }
+
+  return null;
+}
+
+// ============================================================================
 // Token Exchange Configuration
 // ============================================================================
 
@@ -72,7 +128,7 @@ export class TokenExchangeHandler {
   // Step 1: Exchange ID Token for ID-JAG
   // ============================================================================
 
-  private async exchangeIdTokenForIdJag(idToken: string): Promise<string> {
+  private async exchangeIdTokenForIdJag(idToken: string, scopes?: string): Promise<string> {
     const clientAssertion = this.createClientAssertion(
       `https://${this.config.oktaDomain}/oauth2/v1/token`
     );
@@ -83,11 +139,13 @@ export class TokenExchangeHandler {
     formData.append('subject_token', idToken);
     formData.append('subject_token_type', 'urn:ietf:params:oauth:token-type:id_token');
     formData.append('audience', this.config.authorizationServer);
-    formData.append('scope', this.config.agentScopes);
+    formData.append('scope', scopes || this.config.agentScopes);
     formData.append('client_assertion_type', 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer');
     formData.append('client_assertion', clientAssertion);
 
+    const requestedScopes = scopes || this.config.agentScopes;
     console.log(`🔄 Step 1: Exchanging ID token for ID-JAG token...`);
+    console.log(`🎯 Requested scopes: ${requestedScopes}`);
     console.log(`📍 Audience: ${this.config.authorizationServer}`);
     console.log(`🆔 Client ID: ${this.config.clientId}`);
 
@@ -152,7 +210,12 @@ export class TokenExchangeHandler {
   // Token Exchange Flow (Programmatic)
   // ============================================================================
 
-  async exchangeToken(idToken: string): Promise<{
+  /**
+   * Exchange ID token for MCP access token
+   * @param idToken - The user's ID token
+   * @param requestedScopes - Optional scopes to request (for step-up authorization)
+   */
+  async exchangeToken(idToken: string, requestedScopes?: string): Promise<{
     success: boolean;
     id_jag: string;
     access_token?: string;
@@ -168,10 +231,13 @@ export class TokenExchangeHandler {
     }
 
     console.log(`👻 Subject token: ${idToken}`);
+    if (requestedScopes) {
+      console.log(`🔄 Step-up authorization requested with scopes: ${requestedScopes}`);
+    }
 
     try {
       // Step 1: Exchange ID token for ID-JAG
-      const idJag = await this.exchangeIdTokenForIdJag(idToken);
+      const idJag = await this.exchangeIdTokenForIdJag(idToken, requestedScopes);
 
       // Step 2: Exchange ID-JAG for Access Token
       try {

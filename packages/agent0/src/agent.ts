@@ -4,7 +4,71 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import Anthropic from '@anthropic-ai/sdk';
 import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
-import { TokenExchangeHandler, TokenExchangeConfig } from './auth/token-exchange.js';
+import { TokenExchangeHandler, TokenExchangeConfig, parseScopeChallenge } from './auth/token-exchange.js';
+
+// ============================================================================
+// Scope Challenge Types
+// ============================================================================
+
+interface ScopeChallenge {
+  error: string;
+  scope: string[];
+  errorDescription?: string;
+}
+
+/**
+ * Extract scope challenge from any source (HTTP error, MCP response, or error message)
+ * Returns null if no scope challenge found
+ */
+function extractScopeChallenge(source: any): ScopeChallenge | null {
+  if (!source) return null;
+
+  // Source 1: MCP tool response with isError
+  if (source.isError && source.content) {
+    for (const block of source.content) {
+      if (block.type === 'text' && block.text) {
+        try {
+          const parsed = JSON.parse(block.text);
+          if (parsed.error === 'insufficient_scope') {
+            if (parsed.www_authenticate) {
+              return parseScopeChallenge(parsed.www_authenticate);
+            }
+            if (parsed.required_scopes?.length) {
+              return {
+                error: 'insufficient_scope',
+                scope: parsed.required_scopes,
+                errorDescription: parsed.error_description,
+              };
+            }
+          }
+        } catch { /* not JSON */ }
+      }
+    }
+  }
+
+  // Source 2: WWW-Authenticate header (various locations)
+  const wwwAuth =
+    source.response?.headers?.get?.('www-authenticate') ||
+    source.response?.headers?.['www-authenticate'] ||
+    source.headers?.get?.('www-authenticate') ||
+    source.headers?.['www-authenticate'] ||
+    source.data?.headers?.['www-authenticate'];
+
+  if (wwwAuth) {
+    return parseScopeChallenge(wwwAuth);
+  }
+
+  // Source 3: Error message containing WWW-Authenticate
+  if (source.message) {
+    const match = source.message.match(/WWW-Authenticate:\s*(Bearer[^\n]+)/i);
+    if (match) {
+      return parseScopeChallenge(match[1]);
+    }
+  }
+
+  return null;
+}
+
 import { Request } from 'express';
 import * as dotenv from 'dotenv';
 
@@ -277,6 +341,9 @@ export async function disconnectAll(): Promise<void> {
 // Agent Class - MCP Client + LLM Integration
 // ============================================================================
 
+// Maximum number of step-up authorization retries per tool call
+const MAX_STEPUP_RETRIES = 2;
+
 export class Agent {
   private client: Client;
   private transport: StreamableHTTPClientTransport | null = null;
@@ -290,6 +357,7 @@ export class Agent {
     content: string | Array<any>;
   }> = [];
   private tokenExchangeHandler: TokenExchangeHandler | null = null;
+  private grantedScopes: string[] = []; // Tracks scopes from last token exchange
 
   constructor(config: AgentConfig) {
     this.config = config;
@@ -338,7 +406,11 @@ export class Agent {
   // MCP Connection Methods
   // ============================================================================
 
-  async connect(): Promise<boolean> {
+  /**
+   * Connect to MCP server with token exchange
+   * @param requestedScopes - Optional scopes for step-up authorization
+   */
+  async connect(requestedScopes?: string): Promise<boolean> {
     if (!this.isLLMEnabled()) {
       console.warn('⚠️ LLM integration not enabled. Cannot connect agent to MCP.');
       return false;
@@ -355,7 +427,10 @@ export class Agent {
       console.log('   Performing token exchange: ID Token → ID-JAG → MCP Access Token');
 
       // Perform token exchange to get MCP access token
-      const tokenResult = await this.tokenExchangeHandler.exchangeToken(this.config.idToken);
+      const tokenResult = await this.tokenExchangeHandler.exchangeToken(
+        this.config.idToken,
+        requestedScopes
+      );
 
       if (!tokenResult.success || !tokenResult.access_token) {
         throw new Error('Token exchange failed or did not return access token');
@@ -363,6 +438,12 @@ export class Agent {
 
       console.log('✅ Token exchange successful');
       console.log(`⏰ Token expires in: ${tokenResult.expires_in}s`);
+
+      // Track granted scopes (replace, don't accumulate)
+      this.grantedScopes = tokenResult.scope?.split(' ') || [];
+      if (this.grantedScopes.length) {
+        console.log(`🎯 Granted scopes: ${this.grantedScopes.join(' ')}`);
+      }
 
       // Create transport with access token in Authorization header
       this.transport = new StreamableHTTPClientTransport(
@@ -373,7 +454,7 @@ export class Agent {
               'Authorization': `Bearer ${tokenResult.access_token}`
             }
           },
-          
+
         }
       );
 
@@ -389,6 +470,24 @@ export class Agent {
       console.error('❌ Failed to connect to MCP server:', error);
       throw error;
     }
+  }
+
+  /**
+   * Reconnect to MCP server with additional scopes (step-up authorization)
+   */
+  private async reconnectWithScopes(requiredScopes: string[]): Promise<boolean> {
+    // Combine existing and new scopes (MCP spec recommends including existing)
+    const allScopes = [...new Set([...this.grantedScopes, ...requiredScopes])];
+    console.log('🔄 Step-up authorization...');
+    console.log(`   Current: ${this.grantedScopes.join(' ') || '(none)'}`);
+    console.log(`   Required: ${requiredScopes.join(' ')}`);
+    console.log(`   Requesting: ${allScopes.join(' ')}`);
+
+    if (this.isConnected) {
+      await this.disconnect();
+    }
+
+    return this.connect(allScopes.join(' '));
   }
 
   async disconnect(): Promise<void> {
@@ -431,23 +530,54 @@ export class Agent {
     }
   }
 
-  async callTool(toolName: string, args: any = {}): Promise<any> {
+  /**
+   * Call an MCP tool with automatic scope challenge handling
+   * Implements step-up authorization per MCP spec when insufficient_scope is returned
+   */
+  async callTool(toolName: string, args: any = {}, _retryCount: number = 0): Promise<any> {
+    console.log(`\n🔄 Executing tool: ${toolName}`);
+    console.log(`   Arguments: ${JSON.stringify(args, null, 2)}`);
+
     try {
-      console.log(`\n🔄 Executing tool: ${toolName}`);
-      console.log(`   Arguments: ${JSON.stringify(args, null, 2)}`);
+      const response = await this.client.callTool({ name: toolName, arguments: args });
 
-      const callOptions: any = {
-        name: toolName,
-        arguments: args,
-      };
-
-      const response = await this.client.callTool(callOptions);
+      // Check for scope challenge in response
+      const challenge = extractScopeChallenge(response);
+      if (challenge && _retryCount < MAX_STEPUP_RETRIES) {
+        return this.retryWithStepUp(toolName, args, challenge, _retryCount);
+      }
 
       return response;
-    } catch (error) {
+    } catch (error: any) {
+      // Check for scope challenge in error
+      const challenge = extractScopeChallenge(error);
+      if (challenge && _retryCount < MAX_STEPUP_RETRIES) {
+        return this.retryWithStepUp(toolName, args, challenge, _retryCount);
+      }
+
       console.error('❌ Tool execution failed:', error);
       throw error;
     }
+  }
+
+  /**
+   * Retry tool call after step-up authorization
+   */
+  private async retryWithStepUp(
+    toolName: string,
+    args: any,
+    challenge: ScopeChallenge,
+    retryCount: number
+  ): Promise<any> {
+    console.log(`\n⚠️  Scope challenge for: ${toolName}`);
+    console.log(`   Required: ${challenge.scope.join(' ')}`);
+
+    if (await this.reconnectWithScopes(challenge.scope)) {
+      console.log('✅ Retrying tool call...');
+      return this.callTool(toolName, args, retryCount + 1);
+    }
+
+    throw new Error(`Step-up authorization failed for: ${challenge.scope.join(' ')}`);
   }
 
   // ============================================================================
