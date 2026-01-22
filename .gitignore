@@ -20,7 +20,6 @@ pnpm-lock.yaml
 packages/*/node_modules/
 packages/*/dist/
 packages/*/build/
-.github/
 *.pem
 
 # Okta bootstrap state
