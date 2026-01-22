@@ -342,6 +342,24 @@ async function bootstrap(): Promise<void> {
 
   app.use(express.json());
 
+  // DNS Rebinding Protection: Validate Origin header (MCP spec requirement)
+  const ALLOWED_ORIGINS = [
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+    'http://localhost:5001',
+    'http://127.0.0.1:5001',
+    `http://localhost:${config.mcpPort}`,
+    `http://127.0.0.1:${config.mcpPort}`,
+  ];
+
+  app.use('/mcp', (req, res, next) => {
+    const origin = req.headers.origin;
+    if (origin && !ALLOWED_ORIGINS.includes(origin)) {
+      return res.status(403).json({ error: 'Forbidden', message: 'Origin not allowed' });
+    }
+    next();
+  });
+
   const mcpAuthMetadata = await fetch(`${config.mcpOktaIssuer}/.well-known/oauth-authorization-server`).then(res => res.json());
 
   console.log('MCP Auth Metadata:', mcpAuthMetadata);
@@ -507,11 +525,12 @@ async function bootstrap(): Promise<void> {
     }
   });
 
-  app.listen(config.mcpPort, () => {
+  // Bind to localhost only (MCP spec: prevents DNS rebinding attacks)
+  app.listen(config.mcpPort, '127.0.0.1', () => {
     console.log('='.repeat(60));
     console.log('🚀 MCP Todo Server (StreamableHTTP)');
     console.log('='.repeat(60));
-    console.log(`✓ Server running on http://localhost:${config.mcpPort}`);
+    console.log(`✓ Server running on http://127.0.0.1:${config.mcpPort}`);
     console.log(`✓ MCP endpoint: http://localhost:${config.mcpPort}/mcp [SECURED]`);
     console.log(`  - POST: Initialize/Send messages`);
     console.log(`  - GET:  SSE stream (server→client)`);
