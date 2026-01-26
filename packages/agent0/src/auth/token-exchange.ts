@@ -2,6 +2,7 @@
 import { Request, Response } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
+import { randomUUID } from 'crypto';
 import jwt from 'jsonwebtoken';
 import axios from 'axios';
 
@@ -109,7 +110,7 @@ export class TokenExchangeHandler {
     }
 
     const jwtPayload = {
-      jti: Math.random().toString(36).substring(7),
+      jti: randomUUID(),
     };
 
     const signingOptions: jwt.SignOptions = {
