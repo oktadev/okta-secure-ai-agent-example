@@ -271,27 +271,27 @@ async function loadTokenDetails() {
             return;
         }
 
-        // Display user information
+        // Display user information (escaped to prevent XSS)
         const userInfoHtml = `
             <div class="token-info-row">
                 <span class="token-info-label">Email:</span>
-                <span class="token-info-value">${userDetails.email || 'N/A'}</span>
+                <span class="token-info-value">${escapeHtml(userDetails.email) || 'N/A'}</span>
             </div>
             <div class="token-info-row">
                 <span class="token-info-label">Name:</span>
-                <span class="token-info-value">${userDetails.name || 'N/A'}</span>
+                <span class="token-info-value">${escapeHtml(userDetails.name) || 'N/A'}</span>
             </div>
             <div class="token-info-row">
                 <span class="token-info-label">Given Name:</span>
-                <span class="token-info-value">${userDetails.given_name || 'N/A'}</span>
+                <span class="token-info-value">${escapeHtml(userDetails.given_name) || 'N/A'}</span>
             </div>
             <div class="token-info-row">
                 <span class="token-info-label">Family Name:</span>
-                <span class="token-info-value">${userDetails.family_name || 'N/A'}</span>
+                <span class="token-info-value">${escapeHtml(userDetails.family_name) || 'N/A'}</span>
             </div>
             <div class="token-info-row">
                 <span class="token-info-label">Subject (sub):</span>
-                <span class="token-info-value">${userDetails.sub || 'N/A'}</span>
+                <span class="token-info-value">${escapeHtml(userDetails.sub) || 'N/A'}</span>
             </div>
         `;
         document.getElementById('tokenUserInfo').innerHTML = userInfoHtml;
@@ -301,26 +301,27 @@ async function loadTokenDetails() {
         const expiresDate = userDetails.exp ? new Date(userDetails.exp * 1000).toLocaleString() : 'N/A';
         const timeLeft = userDetails.exp ? Math.max(0, Math.floor((userDetails.exp * 1000 - Date.now()) / 1000 / 60)) : 0;
         
+        // Token metadata (escaped to prevent XSS)
         const metadataHtml = `
             <div class="token-info-row">
                 <span class="token-info-label">Issuer:</span>
-                <span class="token-info-value">${userDetails.iss || 'N/A'}</span>
+                <span class="token-info-value">${escapeHtml(userDetails.iss) || 'N/A'}</span>
             </div>
             <div class="token-info-row">
                 <span class="token-info-label">Audience:</span>
-                <span class="token-info-value">${userDetails.aud || 'N/A'}</span>
+                <span class="token-info-value">${escapeHtml(userDetails.aud) || 'N/A'}</span>
             </div>
             <div class="token-info-row">
                 <span class="token-info-label">Issued At:</span>
-                <span class="token-info-value">${issuedDate}</span>
+                <span class="token-info-value">${escapeHtml(issuedDate)}</span>
             </div>
             <div class="token-info-row">
                 <span class="token-info-label">Expires At:</span>
-                <span class="token-info-value">${expiresDate}</span>
+                <span class="token-info-value">${escapeHtml(expiresDate)}</span>
             </div>
             <div class="token-info-row">
                 <span class="token-info-label">Time Remaining:</span>
-                <span class="token-info-value">${timeLeft} minutes</span>
+                <span class="token-info-value">${escapeHtml(timeLeft)} minutes</span>
             </div>
         `;
         document.getElementById('tokenMetadata').innerHTML = metadataHtml;
