@@ -45,7 +45,7 @@ export function createSessionMiddleware(sessionSecret: string) {
       // Cookie secure flag - controls whether cookies are sent only over HTTPS.
       // Default: true (secure). Browsers reject secure cookies over HTTP.
       // For local development without HTTPS, set COOKIE_SECURE=false in your .env file.
-      secure: process.env.COOKIE_SECURE !== 'false',
+      secure: process.env.COOKIE_SECURE,
       httpOnly: true,
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
       sameSite: 'lax', // Prevent CSRF while allowing normal navigation
