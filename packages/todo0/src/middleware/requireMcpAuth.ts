@@ -101,6 +101,7 @@ export function createRequireMcpAuth(config: McpAuthConfig) {
 
     console.log('✅ MCP token verified successfully');
     console.log('   Subject:', jwt.claims.sub);
+    console.log('   User ID:', jwt.claims.uid);
     console.log('   Scopes:', jwt.claims.scp);
     console.log('   Client ID:', jwt.claims.cid);
 
@@ -129,12 +130,12 @@ export function createRequireMcpAuth(config: McpAuthConfig) {
 
   /**
    * Verify access token and check for required scopes
-   * Returns object with success status and missing scopes if any
+   * Returns object with success status, user ID (sub claim), and missing scopes if any
    */
   async function verifyAccessTokenWithScopes(
     authorizationHeader: string,
     expectedScopes: string[]
-  ): Promise<{ valid: boolean; missingScopes?: string[] }> {
+  ): Promise<{ valid: boolean; userId?: string; missingScopes?: string[] }> {
     console.log('🔍 Verifying MCP access token with scopes:', expectedScopes);
 
     const match = authorizationHeader.match(/^Bearer (.+)$/);
@@ -158,7 +159,9 @@ export function createRequireMcpAuth(config: McpAuthConfig) {
         return { valid: false, missingScopes };
       }
 
-      return { valid: true };
+      // Return the user's uid claim (Okta user ID) for user-scoped operations
+      // Note: Using uid instead of sub because sub contains email in MCP tokens
+      return { valid: true, userId: jwt.claims.uid as string };
     } catch (error) {
       console.log('✗ Token verification failed');
       console.error('Token verification error details:', error);

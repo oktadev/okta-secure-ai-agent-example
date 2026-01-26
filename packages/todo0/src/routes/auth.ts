@@ -121,6 +121,9 @@ router.get('/callback', async (req, res) => {
       hasIdToken: !!tokenSet.id_token,
     });
 
+    // Get user claims before regenerating session
+    const claims = tokenSet.claims();
+
     // Regenerate session to prevent session fixation attacks
     req.session.regenerate((err) => {
       if (err) {
@@ -132,7 +135,11 @@ router.get('/callback', async (req, res) => {
       (req.session as any).access_token = tokenSet.access_token;
       (req.session as any).id_token = tokenSet.id_token;
 
-      console.log('[AUTH] Session regenerated, tokens stored, redirecting to /');
+      // Store user claims for user-scoped operations
+      (req.session as any).userId = claims.sub;
+      (req.session as any).userEmail = claims.email;
+
+      console.log('[AUTH] Session regenerated, tokens stored for user:', claims.sub);
       res.redirect('/');
     });
   } catch (err: any) {

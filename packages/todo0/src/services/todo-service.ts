@@ -5,27 +5,41 @@ const prisma = new PrismaClient();
 /**
  * Shared business logic for todo operations.
  * Used by both todo0 app routes and MCP server tools to avoid token passthrough anti-pattern.
+ * All operations are scoped to the authenticated user's ID.
  */
 export class TodoService {
   /**
-   * Get all todos, ordered by ID descending
+   * Get all todos for a specific user, ordered by ID descending
+   * @param userId - The authenticated user's ID (Okta sub claim)
    */
-  async getAllTodos(): Promise<Todo[]> {
-    return prisma.todo.findMany({ orderBy: { id: 'desc' } });
+  async getAllTodos(userId: string): Promise<Todo[]> {
+    return prisma.todo.findMany({
+      where: { userId },
+      orderBy: { id: 'desc' }
+    });
   }
 
   /**
-   * Create a new todo
+   * Create a new todo for a specific user
+   * @param title - The todo title
+   * @param userId - The authenticated user's ID (Okta sub claim)
    */
-  async createTodo(title: string): Promise<Todo> {
-    return prisma.todo.create({ data: { title } });
+  async createTodo(title: string, userId: string): Promise<Todo> {
+    return prisma.todo.create({
+      data: { title, userId }
+    });
   }
 
   /**
-   * Toggle the completed status of a todo
+   * Toggle the completed status of a todo (only if owned by user)
+   * @param id - The todo ID
+   * @param userId - The authenticated user's ID (Okta sub claim)
    */
-  async toggleTodo(id: number): Promise<Todo | null> {
-    const todo = await prisma.todo.findUnique({ where: { id } });
+  async toggleTodo(id: number, userId: string): Promise<Todo | null> {
+    // First verify the todo belongs to this user
+    const todo = await prisma.todo.findFirst({
+      where: { id, userId }
+    });
     if (!todo) {
       return null;
     }
@@ -36,22 +50,31 @@ export class TodoService {
   }
 
   /**
-   * Delete a todo by ID
+   * Delete a todo by ID (only if owned by user)
+   * @param id - The todo ID
+   * @param userId - The authenticated user's ID (Okta sub claim)
    */
-  async deleteTodo(id: number): Promise<boolean> {
+  async deleteTodo(id: number, userId: string): Promise<boolean> {
     try {
-      await prisma.todo.delete({ where: { id } });
-      return true;
+      // Only delete if the todo belongs to this user
+      const result = await prisma.todo.deleteMany({
+        where: { id, userId }
+      });
+      return result.count > 0;
     } catch (error) {
       return false;
     }
   }
 
   /**
-   * Get a single todo by ID
+   * Get a single todo by ID (only if owned by user)
+   * @param id - The todo ID
+   * @param userId - The authenticated user's ID (Okta sub claim)
    */
-  async getTodoById(id: number): Promise<Todo | null> {
-    return prisma.todo.findUnique({ where: { id } });
+  async getTodoById(id: number, userId: string): Promise<Todo | null> {
+    return prisma.todo.findFirst({
+      where: { id, userId }
+    });
   }
 }
 
