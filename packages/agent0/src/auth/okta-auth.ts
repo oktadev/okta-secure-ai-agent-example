@@ -208,18 +208,26 @@ export class OktaAuthHelper {
       );
 
       if (tokenSet.access_token && tokenSet.id_token) {
-        // Store tokens in session
-        (req.session as any).idToken = tokenSet.id_token;
-        (req.session as any).accessToken = tokenSet.access_token;
-        (req.session as any).userInfo = tokenSet.claims();
+        const claims = tokenSet.claims();
 
-        // Clear PKCE parameters
-        delete (req.session as any).pkce;
+        // Regenerate session to prevent session fixation attacks
+        req.session.regenerate((err) => {
+          if (err) {
+            console.error('Session regeneration failed:', err);
+            res.redirect('/?error=session_error');
+            return;
+          }
 
-        console.log('✅ User authenticated:', tokenSet.claims().email || tokenSet.claims().sub);
+          // Store tokens in the NEW session
+          (req.session as any).idToken = tokenSet.id_token;
+          (req.session as any).accessToken = tokenSet.access_token;
+          (req.session as any).userInfo = claims;
 
-        // Redirect to main page
-        res.redirect('/');
+          console.log('✅ User authenticated:', claims.email || claims.sub);
+
+          // Redirect to main page
+          res.redirect('/');
+        });
       } else {
         throw new Error('No tokens received from Okta');
       }
