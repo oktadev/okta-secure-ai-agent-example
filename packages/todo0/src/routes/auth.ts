@@ -120,16 +120,21 @@ router.get('/callback', async (req, res) => {
       hasAccessToken: !!tokenSet.access_token,
       hasIdToken: !!tokenSet.id_token,
     });
-    
-    // Store tokens in session
-    (req.session as any).access_token = tokenSet.access_token;
-    (req.session as any).id_token = tokenSet.id_token;
-    
-    // Clear PKCE parameters from session
-    delete (req.session as any).pkce;
-    
-    console.log('[AUTH] Tokens stored in session, redirecting to /');
-    res.redirect('/');
+
+    // Regenerate session to prevent session fixation attacks
+    req.session.regenerate((err) => {
+      if (err) {
+        console.error('[AUTH] Session regeneration failed:', err);
+        return res.status(500).send('Session error during authentication');
+      }
+
+      // Store tokens in the NEW session
+      (req.session as any).access_token = tokenSet.access_token;
+      (req.session as any).id_token = tokenSet.id_token;
+
+      console.log('[AUTH] Session regenerated, tokens stored, redirecting to /');
+      res.redirect('/');
+    });
   } catch (err: any) {
     console.error('[AUTH] Token exchange failed:', err.message);
     console.error('[AUTH] Error details:', err);
