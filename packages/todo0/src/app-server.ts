@@ -133,8 +133,11 @@ app.use(session({
   resave: false,
   saveUninitialized: false,
   rolling: true, // Keep session alive with activity
-  cookie: { 
-    secure: false,
+  cookie: {
+    // Cookie secure flag - controls whether cookies are sent only over HTTPS.
+    // Default: true (secure). Browsers reject secure cookies over HTTP.
+    // For local development without HTTPS, set COOKIE_SECURE=false in your .env file.
+    secure: process.env.COOKIE_SECURE !== 'false',
     httpOnly: true,
     maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
     sameSite: 'lax',
