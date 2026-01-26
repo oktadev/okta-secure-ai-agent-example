@@ -46,8 +46,13 @@ const deleteTodoParams: z.ZodRawShape = {
 /**
  * Register MCP tools with scope-based authorization
  */
-function registerTools(verifyAccessTokenWithScopes: (authHeader: string, scopes: string[]) => Promise<{ valid: boolean; missingScopes?: string[] }>): void {
-  const makeProtectedTool = (scopes: string[], cb: (params: any, extra: RequestHandlerExtra<ServerRequest, ServerNotification>) => Promise<any>): ((args: any, extra: RequestHandlerExtra<ServerRequest, ServerNotification>) => Promise<any>) => {
+function registerTools(verifyAccessTokenWithScopes: (authHeader: string, scopes: string[]) => Promise<{ valid: boolean; userId?: string; missingScopes?: string[] }>): void {
+  /**
+   * Create a protected tool that verifies scopes and passes userId to the callback
+   * @param scopes - Required scopes for this tool
+   * @param cb - Tool callback that receives params and userId
+   */
+  const makeProtectedTool = (scopes: string[], cb: (params: any, userId: string, extra: RequestHandlerExtra<ServerRequest, ServerNotification>) => Promise<any>): ((args: any, extra: RequestHandlerExtra<ServerRequest, ServerNotification>) => Promise<any>) => {
       return async (params: any, extra: RequestHandlerExtra<ServerRequest, ServerNotification>) => {
         if (!extra.requestInfo?.headers.authorization) {
           throw new Error('Missing Authorization header in tool callback');
@@ -60,7 +65,7 @@ function registerTools(verifyAccessTokenWithScopes: (authHeader: string, scopes:
         console.log('🔍 Verifying access token for tool execution...');
         const authResult = await verifyAccessTokenWithScopes(authorizationHeader, scopes);
 
-        if (!authResult.valid) {
+        if (!authResult.valid || !authResult.userId) {
           // Check if this is a scope challenge (missing scopes) vs invalid token
           if (authResult.missingScopes && authResult.missingScopes.length > 0) {
             console.log(`🔐 Scope challenge: missing scopes ${authResult.missingScopes.join(', ')}`);
@@ -94,7 +99,8 @@ function registerTools(verifyAccessTokenWithScopes: (authHeader: string, scopes:
         }
 
         try {
-          return await cb(params, extra);
+          // Pass userId to the tool callback for user-scoped operations
+          return await cb(params, authResult.userId, extra);
         } catch (error) {
           return {
             content: [{
@@ -125,8 +131,8 @@ function registerTools(verifyAccessTokenWithScopes: (authHeader: string, scopes:
       [
         'mcp:tools:manage'
       ],
-      async ({ title }) => {
-        const todo = await todoService.createTodo(title);
+      async ({ title }, userId) => {
+        const todo = await todoService.createTodo(title, userId);
 
         return {
           content: [{
@@ -148,14 +154,14 @@ function registerTools(verifyAccessTokenWithScopes: (authHeader: string, scopes:
 
   server.tool(
     'get-todos',
-    'List all todos.',
+    'List all todos for the authenticated user.',
     emptyParams,
     makeProtectedTool(
       [
         'mcp:tools:read'
       ],
-      async () => {
-        const todos = await todoService.getAllTodos();
+      async (_params, userId) => {
+        const todos = await todoService.getAllTodos(userId);
 
         return {
           content: [{
@@ -184,8 +190,8 @@ function registerTools(verifyAccessTokenWithScopes: (authHeader: string, scopes:
       [
         'mcp:tools:manage'
       ],
-      async ({ id }) => {
-        const todo = await todoService.toggleTodo(id);
+      async ({ id }, userId) => {
+        const todo = await todoService.toggleTodo(id, userId);
 
         if (!todo) {
           return {
@@ -193,7 +199,7 @@ function registerTools(verifyAccessTokenWithScopes: (authHeader: string, scopes:
               type: 'text',
               text: JSON.stringify({
                 error: 'Not Found',
-                message: 'Todo not found'
+                message: 'Todo not found or not owned by user'
               })
             }],
             isError: true,
@@ -226,8 +232,8 @@ function registerTools(verifyAccessTokenWithScopes: (authHeader: string, scopes:
       [
         'mcp:tools:manage'
       ],
-      async ({ id }) => {
-        const deleted = await todoService.deleteTodo(id);
+      async ({ id }, userId) => {
+        const deleted = await todoService.deleteTodo(id, userId);
 
         if (!deleted) {
           return {
@@ -235,7 +241,7 @@ function registerTools(verifyAccessTokenWithScopes: (authHeader: string, scopes:
               type: 'text',
               text: JSON.stringify({
                 error: 'Not Found',
-                message: 'Todo not found or already deleted'
+                message: 'Todo not found, already deleted, or not owned by user'
               })
             }],
             isError: true,

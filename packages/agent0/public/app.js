@@ -1,4 +1,47 @@
 const API_BASE_URL = 'http://localhost:3000';
+
+// ============================================================================
+// XSS Prevention: HTML Escape Utility
+// ============================================================================
+
+/**
+ * Escape HTML special characters to prevent XSS attacks
+ * @param {string} text - Untrusted user input
+ * @returns {string} - Safe HTML-escaped string
+ */
+function escapeHtml(text) {
+    if (text === null || text === undefined) {
+        return '';
+    }
+    const str = String(text);
+    const htmlEscapes = {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#x27;',
+        '/': '&#x2F;'
+    };
+    return str.replace(/[&<>"'/]/g, char => htmlEscapes[char]);
+}
+
+// ============================================================================
+// Marked.js Configuration (Markdown Parser Security)
+// ============================================================================
+
+/**
+ * Configure marked.js with security options
+ * Note: For full XSS protection, consider adding DOMPurify
+ */
+if (typeof marked !== 'undefined') {
+    marked.setOptions({
+        breaks: true,      // Convert \n to <br>
+        gfm: true,         // GitHub Flavored Markdown
+        headerIds: false,  // Disable header IDs (prevents ID-based attacks)
+        mangle: false      // Don't mangle email addresses
+    });
+}
+
 const statusEl = document.getElementById('status');
 const statusTextEl = document.getElementById('statusText');
 const chatContainer = document.getElementById('chatContainer');
@@ -228,27 +271,27 @@ async function loadTokenDetails() {
             return;
         }
 
-        // Display user information
+        // Display user information (escaped to prevent XSS)
         const userInfoHtml = `
             <div class="token-info-row">
                 <span class="token-info-label">Email:</span>
-                <span class="token-info-value">${userDetails.email || 'N/A'}</span>
+                <span class="token-info-value">${escapeHtml(userDetails.email) || 'N/A'}</span>
             </div>
             <div class="token-info-row">
                 <span class="token-info-label">Name:</span>
-                <span class="token-info-value">${userDetails.name || 'N/A'}</span>
+                <span class="token-info-value">${escapeHtml(userDetails.name) || 'N/A'}</span>
             </div>
             <div class="token-info-row">
                 <span class="token-info-label">Given Name:</span>
-                <span class="token-info-value">${userDetails.given_name || 'N/A'}</span>
+                <span class="token-info-value">${escapeHtml(userDetails.given_name) || 'N/A'}</span>
             </div>
             <div class="token-info-row">
                 <span class="token-info-label">Family Name:</span>
-                <span class="token-info-value">${userDetails.family_name || 'N/A'}</span>
+                <span class="token-info-value">${escapeHtml(userDetails.family_name) || 'N/A'}</span>
             </div>
             <div class="token-info-row">
                 <span class="token-info-label">Subject (sub):</span>
-                <span class="token-info-value">${userDetails.sub || 'N/A'}</span>
+                <span class="token-info-value">${escapeHtml(userDetails.sub) || 'N/A'}</span>
             </div>
         `;
         document.getElementById('tokenUserInfo').innerHTML = userInfoHtml;
@@ -258,26 +301,27 @@ async function loadTokenDetails() {
         const expiresDate = userDetails.exp ? new Date(userDetails.exp * 1000).toLocaleString() : 'N/A';
         const timeLeft = userDetails.exp ? Math.max(0, Math.floor((userDetails.exp * 1000 - Date.now()) / 1000 / 60)) : 0;
         
+        // Token metadata (escaped to prevent XSS)
         const metadataHtml = `
             <div class="token-info-row">
                 <span class="token-info-label">Issuer:</span>
-                <span class="token-info-value">${userDetails.iss || 'N/A'}</span>
+                <span class="token-info-value">${escapeHtml(userDetails.iss) || 'N/A'}</span>
             </div>
             <div class="token-info-row">
                 <span class="token-info-label">Audience:</span>
-                <span class="token-info-value">${userDetails.aud || 'N/A'}</span>
+                <span class="token-info-value">${escapeHtml(userDetails.aud) || 'N/A'}</span>
             </div>
             <div class="token-info-row">
                 <span class="token-info-label">Issued At:</span>
-                <span class="token-info-value">${issuedDate}</span>
+                <span class="token-info-value">${escapeHtml(issuedDate)}</span>
             </div>
             <div class="token-info-row">
                 <span class="token-info-label">Expires At:</span>
-                <span class="token-info-value">${expiresDate}</span>
+                <span class="token-info-value">${escapeHtml(expiresDate)}</span>
             </div>
             <div class="token-info-row">
                 <span class="token-info-label">Time Remaining:</span>
-                <span class="token-info-value">${timeLeft} minutes</span>
+                <span class="token-info-value">${escapeHtml(timeLeft)} minutes</span>
             </div>
         `;
         document.getElementById('tokenMetadata').innerHTML = metadataHtml;
@@ -478,12 +522,12 @@ function addMessageToDOM(text, type = 'assistant', data = null, saveToHistory = 
     
     if (data && data.todos) {
         // Format todos nicely
-        let html = `<strong>Found ${data.count} todo(s):</strong><br><br>`;
+        let html = `<strong>Found ${escapeHtml(data.count)} todo(s):</strong><br><br>`;
         data.todos.forEach((todo, index) => {
             const status = todo.completed ? '✅' : '⬜';
             html += `<div class="todo-item ${todo.completed ? 'completed' : ''}">`;
-            html += `${status} <strong>${todo.title}</strong><br>`;
-            html += `<small>ID: ${todo.id}</small>`;
+            html += `${status} <strong>${escapeHtml(todo.title)}</strong><br>`;
+            html += `<small>ID: ${escapeHtml(todo.id)}</small>`;
             html += `</div>`;
         });
         contentDiv.innerHTML = html;
@@ -492,11 +536,11 @@ function addMessageToDOM(text, type = 'assistant', data = null, saveToHistory = 
         const todo = data.todo;
         const status = todo.completed ? '✅' : '⬜';
         let html = `<div class="todo-item ${todo.completed ? 'completed' : ''}">`;
-        html += `${status} <strong>${todo.title}</strong><br>`;
-        html += `<small>ID: ${todo.id}</small>`;
+        html += `${status} <strong>${escapeHtml(todo.title)}</strong><br>`;
+        html += `<small>ID: ${escapeHtml(todo.id)}</small>`;
         html += `</div>`;
         if (data.message) {
-            html += `<br>${data.message}`;
+            html += `<br>${escapeHtml(data.message)}`;
         }
         contentDiv.innerHTML = html;
     } else if (data && data.toolResults) {
@@ -504,33 +548,40 @@ function addMessageToDOM(text, type = 'assistant', data = null, saveToHistory = 
         let html = '';
         data.toolResults.forEach(tr => {
             if (tr.result.todos) {
-                html += `<strong>Found ${tr.result.count} todo(s):</strong><br><br>`;
+                html += `<strong>Found ${escapeHtml(tr.result.count)} todo(s):</strong><br><br>`;
                 tr.result.todos.forEach((todo) => {
                     const status = todo.completed ? '✅' : '⬜';
                     html += `<div class="todo-item ${todo.completed ? 'completed' : ''}">`;
-                    html += `${status} <strong>${todo.title}</strong><br>`;
-                    html += `<small>ID: ${todo.id}</small>`;
+                    html += `${status} <strong>${escapeHtml(todo.title)}</strong><br>`;
+                    html += `<small>ID: ${escapeHtml(todo.id)}</small>`;
                     html += `</div>`;
                 });
             } else if (tr.result.todo) {
                 const todo = tr.result.todo;
                 const status = todo.completed ? '✅' : '⬜';
                 html += `<div class="todo-item ${todo.completed ? 'completed' : ''}">`;
-                html += `${status} <strong>${todo.title}</strong><br>`;
-                html += `<small>ID: ${todo.id}</small>`;
+                html += `${status} <strong>${escapeHtml(todo.title)}</strong><br>`;
+                html += `<small>ID: ${escapeHtml(todo.id)}</small>`;
                 html += `</div>`;
             }
         });
         contentDiv.innerHTML = html;
     } else {
-        // Render markdown for text messages
+        // Render markdown for text messages (sanitized to prevent XSS)
         if (text) {
             try {
                 // Check if marked is available and use it
                 if (typeof marked !== 'undefined' && marked.parse) {
-                    contentDiv.innerHTML = marked.parse(text);
+                    const rawHtml = marked.parse(text);
+                    // Sanitize with DOMPurify to prevent XSS from LLM responses
+                    contentDiv.innerHTML = typeof DOMPurify !== 'undefined'
+                        ? DOMPurify.sanitize(rawHtml)
+                        : escapeHtml(rawHtml);
                 } else if (typeof window.marked !== 'undefined' && window.marked.parse) {
-                    contentDiv.innerHTML = window.marked.parse(text);
+                    const rawHtml = window.marked.parse(text);
+                    contentDiv.innerHTML = typeof DOMPurify !== 'undefined'
+                        ? DOMPurify.sanitize(rawHtml)
+                        : escapeHtml(rawHtml);
                 } else {
                     // Fallback to plain text
                     contentDiv.textContent = text;
