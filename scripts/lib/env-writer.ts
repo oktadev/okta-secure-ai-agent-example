@@ -1,5 +1,13 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import * as crypto from 'crypto';
+
+/**
+ * Generate a cryptographically secure random session secret
+ */
+function generateSessionSecret(): string {
+  return crypto.randomBytes(32).toString('hex');
+}
 
 export interface BootstrapConfig {
   oktaDomain: string;
@@ -30,7 +38,7 @@ export function generateAgent0AppEnv(config: BootstrapConfig): string {
 # RESOURCE SERVER CONFIGURATION
 # ============================================================================
 PORT=3000
-SESSION_SECRET=default-secret-change-in-production
+SESSION_SECRET=${generateSessionSecret()}
 
 # ============================================================================
 # RESOURCE SERVER - OKTA OAUTH (HUMAN SSO)
@@ -92,6 +100,7 @@ export function generateTodo0AppEnv(config: BootstrapConfig): string {
 # APP SERVER CONFIGURATION
 # ============================================================================
 PORT=5001
+SESSION_SECRET=${generateSessionSecret()}
 
 # ============================================================================
 # APP SERVER - OKTA OAUTH (HUMAN SSO)
