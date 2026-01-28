@@ -365,9 +365,9 @@ async function bootstrap() {
       const connection = await agentClient.createConnection(agentIdentityId, {
         connectionType: 'IDENTITY_ASSERTION_CUSTOM_AS',
         authorizationServer: {
-          orn: authServerOrn,
-          resourceIndicator: config.mcpAudience,
+          orn: authServerOrn
         },
+        resourceIndicator: config.mcpAudience,
         scopeCondition: 'INCLUDE_ONLY',
         scopes: mcpScopes,
       });
