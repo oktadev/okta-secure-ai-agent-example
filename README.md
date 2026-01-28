@@ -127,7 +127,7 @@ graph TB
 
 Before running the bootstrap script, you'll need:
 
-1. **Node.js 18.12 or later**
+1. **Node.js 19 or later**
    - Download from [https://nodejs.org/](https://nodejs.org/)
    - Verify installation: `node --version`
 
