@@ -1,6 +1,5 @@
 import express from 'express';
 import path from 'path';
-import bodyParser from 'body-parser';
 import session from 'express-session';
 import helmet from 'helmet';
 import { randomUUID } from 'crypto';
@@ -162,7 +161,7 @@ app.use(session({
     sameSite: 'lax',
   }
 }));
-app.use(bodyParser.urlencoded({ extended: false }));
+app.use(express.urlencoded({ extended: false }));
 app.use(express.json()); // Enable JSON body parsing for API routes
 app.use(express.static(path.join(__dirname, '../public')));
 
