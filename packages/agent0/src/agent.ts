@@ -231,46 +231,11 @@ export async function initializeLLMConfig(): Promise<void> {
     return;
   }
 
-  console.log('\n Initializing LLM configuration...');
+  console.log('\n Initializing LLM configuration from environment variables...');
 
-  // Try OPA first if configured
-  if (isOPAConfigured()) {
-    console.log(' OPA secret management detected, attempting to fetch credentials...');
-    try {
-      const opaCredentials = await fetchLLMCredentialsFromOPA();
+  // Note: OPA credentials are now fetched per-user-session in getAgentForUserContext()
+  // This function only handles environment variable fallback
 
-      if (opaCredentials) {
-        // Convert OPA credentials to AgentLLMConfig format
-        if (opaCredentials.provider === 'anthropic') {
-          llmConfig = {
-            mcpServerUrl: process.env.MCP_SERVER_URL || '',
-            llmProvider: 'anthropic',
-            anthropicApiKey: opaCredentials.apiKey,
-            anthropicModel: opaCredentials.model,
-          };
-        } else {
-          llmConfig = {
-            mcpServerUrl: process.env.MCP_SERVER_URL || '',
-            llmProvider: 'bedrock',
-            awsRegion: opaCredentials.awsRegion,
-            awsAccessKeyId: opaCredentials.awsAccessKeyId,
-            awsSecretAccessKey: opaCredentials.awsSecretAccessKey,
-            awsSessionToken: opaCredentials.awsSessionToken,
-            bedrockModelId: opaCredentials.bedrockModelId,
-          };
-        }
-        llmConfigSource = 'opa';
-        llmConfigInitialized = true;
-        console.log(' LLM credentials loaded from OPA');
-        return;
-      }
-    } catch (error: any) {
-      console.warn(' Failed to fetch credentials from OPA:', error.message);
-      console.warn(' Falling back to environment variables...');
-    }
-  }
-
-  // Fall back to environment variables
   try {
     llmConfig = validateAgentLLMEnv();
     llmConfigSource = 'env';
@@ -300,17 +265,20 @@ export function isLLMConfigInitialized(): boolean {
 
 // Try synchronous initialization at module load (for backwards compatibility)
 // This will only work if env vars are set and OPA is not configured
+// Try synchronous initialization from env vars at module load
+// OPA credentials are fetched per-user-session, so we don't init them here
 try {
   if (!isOPAConfigured()) {
+    // No OPA configured, must use env vars
     llmConfig = validateAgentLLMEnv();
     llmConfigSource = 'env';
     llmConfigInitialized = true;
   }
+  // If OPA is configured, credentials will be fetched in getAgentForUserContext()
 } catch {
-  // If sync init fails and OPA is configured, that's fine - will init async later
-  // If sync init fails and OPA is not configured, we have a problem
+  // If env var init fails and OPA is configured, that's fine - will use OPA per-session
   if (!isOPAConfigured()) {
-    console.error('LLM configuration failed - no env vars or OPA configured');
+    console.error('LLM configuration failed - no env vars configured and OPA not available');
   }
 }
 
@@ -405,7 +373,55 @@ function buildAgentConfig(): Omit<AgentConfig, 'idToken' | 'userContext'> | null
 }
 
 export async function getAgentForUserContext(idToken: string, userContext: UserContext): Promise<Agent> {
-  // Ensure LLM config is initialized (will be a no-op if already initialized)
+  // Try OPA token exchange for credential retrieval (per-user-session)
+  if (isOPAConfigured()) {
+    console.log('\n🔐 OPA secret management detected, fetching credentials via token exchange...');
+
+    try {
+      const opaCredentials = await fetchLLMCredentialsFromOPA(idToken);
+
+      if (opaCredentials) {
+        // Build config from OPA credentials
+        const baseConfig = {
+          mcpServerUrl: process.env.MCP_SERVER_URL || '',
+          name: 'agent0',
+          version: '1.0.0',
+          tokenExchange: buildTokenExchangeConfig(),
+          enableLLM: true,
+          idToken,
+          userContext,
+        };
+
+        let agentConfig: AgentConfig;
+
+        if (opaCredentials.provider === 'anthropic') {
+          agentConfig = {
+            ...baseConfig,
+            anthropicApiKey: opaCredentials.apiKey,
+            anthropicModel: opaCredentials.model,
+          };
+        } else {
+          agentConfig = {
+            ...baseConfig,
+            awsRegion: opaCredentials.awsRegion,
+            awsAccessKeyId: opaCredentials.awsAccessKeyId,
+            awsSecretAccessKey: opaCredentials.awsSecretAccessKey,
+            awsSessionToken: opaCredentials.awsSessionToken,
+            bedrockModelId: opaCredentials.bedrockModelId,
+          };
+        }
+
+        llmConfigSource = 'opa';
+        console.log('✅ Agent configured with OPA credentials');
+        return new Agent(agentConfig);
+      }
+    } catch (error: any) {
+      console.warn('⚠️  Failed to fetch OPA credentials:', error.message);
+      console.warn('   Falling back to environment variables...');
+    }
+  }
+
+  // Fallback to environment variables
   await initializeLLMConfig();
 
   const agentConfig = buildAgentConfig();

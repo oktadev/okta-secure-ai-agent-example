@@ -1,23 +1,11 @@
-// opa-secrets.ts - Fetch LLM credentials from Okta Privileged Access (OPA)
-import {
-  OPAClient,
-  createOPAClientFromCredentials,
-  type RevealedSecret,
-} from './opa-api.js';
+// opa-secrets.ts - Fetch LLM credentials from Okta Privileged Access (OPA) via Token Exchange
+// Uses OAuth 2.0 Token Exchange to retrieve vaulted secrets from OPA
+
+import { TokenExchangeHandler, TokenExchangeConfig } from '../auth/token-exchange.js';
 
 // ============================================================================
 // Types
 // ============================================================================
-
-export interface OPARuntimeConfig {
-  baseUrl: string;
-  teamName: string;
-  keyId: string;
-  keySecret: string;
-  resourceGroupId: string;
-  projectId: string;
-  folderId?: string | undefined;
-}
 
 export interface AnthropicCredentials {
   provider: 'anthropic';
@@ -37,63 +25,88 @@ export interface BedrockCredentials {
 export type LLMCredentials = AnthropicCredentials | BedrockCredentials;
 
 // ============================================================================
-// Token Caching
+// Credential Cache (per-user, with TTL)
 // ============================================================================
 
-interface CachedClient {
-  client: OPAClient;
-  expiresAt: number; // Unix timestamp in ms
-  configHash: string;
+interface CachedCredentials {
+  credentials: LLMCredentials;
+  idTokenHash: string;  // Hash of ID token to detect refresh
+  expiresAt: number;    // Unix timestamp in ms
 }
 
-let cachedClient: CachedClient | null = null;
+const credentialCache = new Map<string, CachedCredentials>();
+const CACHE_TTL_MS = 55 * 60 * 1000; // 55 minutes (ID tokens typically expire in 1 hour)
 
 /**
- * Generate a hash of config for cache invalidation
+ * Simple hash for ID token (to detect token refresh without storing full token)
  */
-function getConfigHash(cfg: OPARuntimeConfig): string {
-  return `${cfg.baseUrl}:${cfg.teamName}:${cfg.keyId}`;
+function hashToken(token: string): string {
+  // Use last 16 chars of token as a simple fingerprint
+  return token.slice(-16);
 }
 
 /**
- * Create an authenticated OPA client using runtime credentials
- * Uses token caching to avoid repeated authentication (tokens expire after ~1 hour)
+ * Get cached credentials for a user
  */
-async function createRuntimeClient(config: OPARuntimeConfig): Promise<OPAClient> {
-  const configHash = getConfigHash(config);
+function getCachedCredentials(userId: string, idToken: string): LLMCredentials | null {
+  const cached = credentialCache.get(userId);
+  if (!cached) return null;
 
-  // Check if we have a valid cached client
-  // Use 5-minute buffer before expiry to avoid edge cases
-  const bufferMs = 5 * 60 * 1000;
-  if (cachedClient &&
-      cachedClient.configHash === configHash &&
-      cachedClient.expiresAt > Date.now() + bufferMs) {
-    return cachedClient.client;
+  const tokenHash = hashToken(idToken);
+  const now = Date.now();
+
+  // Check if cache is valid (not expired and same token)
+  if (cached.expiresAt > now && cached.idTokenHash === tokenHash) {
+    return cached.credentials;
   }
 
-  // Create new client and cache it
-  const client = await createOPAClientFromCredentials(
-    config.baseUrl,
-    config.teamName,
-    config.keyId,
-    config.keySecret
-  );
-
-  // Cache with 1-hour expiry (OPA tokens typically expire in 1 hour)
-  cachedClient = {
-    client,
-    expiresAt: Date.now() + 60 * 60 * 1000,
-    configHash,
-  };
-
-  return client;
+  // Cache is stale, remove it
+  credentialCache.delete(userId);
+  return null;
 }
 
 /**
- * Clear the cached client (useful for testing or forced re-authentication)
+ * Cache credentials for a user
  */
-export function clearClientCache(): void {
-  cachedClient = null;
+function cacheCredentials(userId: string, idToken: string, credentials: LLMCredentials): void {
+  credentialCache.set(userId, {
+    credentials,
+    idTokenHash: hashToken(idToken),
+    expiresAt: Date.now() + CACHE_TTL_MS,
+  });
+}
+
+/**
+ * Clear cached credentials for a user (useful on logout)
+ */
+export function clearCredentialCache(userId?: string): void {
+  if (userId) {
+    credentialCache.delete(userId);
+  } else {
+    credentialCache.clear();
+  }
+}
+
+// ============================================================================
+// Token Exchange Handler (Singleton)
+// ============================================================================
+
+let tokenExchangeHandler: TokenExchangeHandler | null = null;
+
+function getTokenExchangeHandler(): TokenExchangeHandler {
+  if (!tokenExchangeHandler) {
+    const config: TokenExchangeConfig = {
+      oktaDomain: process.env.OKTA_DOMAIN || '',
+      clientId: process.env.AI_AGENT_ID || '',
+      privateKeyFile: process.env.AI_AGENT_PRIVATE_KEY_FILE || '',
+      privateKeyKid: process.env.AI_AGENT_PRIVATE_KEY_KID || '',
+      authorizationServer: process.env.MCP_AUTHORIZATION_SERVER || '',
+      authorizationServerTokenEndpoint: process.env.MCP_AUTHORIZATION_SERVER_TOKEN_ENDPOINT || '',
+      agentScopes: process.env.AI_AGENT_TODO_MCP_SERVER_SCOPES_TO_REQUEST || '',
+    };
+    tokenExchangeHandler = new TokenExchangeHandler(config);
+  }
+  return tokenExchangeHandler;
 }
 
 // ============================================================================
@@ -101,193 +114,142 @@ export function clearClientCache(): void {
 // ============================================================================
 
 /**
- * Check if OPA secret management is configured with new API key auth
+ * Check if OPA secret management is configured (token exchange mode)
+ * Requires agent identity config and at least one secret ORN
  */
 export function isOPAConfigured(): boolean {
   return !!(
-    process.env.OPA_BASE_URL &&
-    process.env.OPA_TEAM_NAME &&
-    process.env.OPA_KEY_ID &&
-    process.env.OPA_KEY_SECRET &&
-    process.env.OPA_RESOURCE_GROUP_ID &&
-    process.env.OPA_PROJECT_ID &&
-    process.env.OPA_LLM_PROVIDER
+    process.env.OKTA_DOMAIN &&
+    process.env.AI_AGENT_ID &&
+    process.env.AI_AGENT_PRIVATE_KEY_FILE &&
+    process.env.AI_AGENT_PRIVATE_KEY_KID &&
+    process.env.OPA_LLM_PROVIDER &&
+    (process.env.OPA_ANTHROPIC_API_KEY_ORN || process.env.OPA_AWS_ACCESS_KEY_ORN)
   );
 }
 
 /**
- * Check if legacy token-based OPA configuration is present
+ * Get the configured LLM provider
  */
-export function isLegacyOPAConfigured(): boolean {
-  return !!(
-    process.env.OPA_BASE_URL &&
-    process.env.OPA_TEAM_NAME &&
-    process.env.OPA_SERVICE_ACCOUNT_TOKEN &&
-    process.env.OPA_RESOURCE_GROUP_ID &&
-    process.env.OPA_PROJECT_ID &&
-    process.env.OPA_LLM_PROVIDER
-  );
-}
-
-/**
- * Get OPA runtime configuration from environment variables
- */
-function getOPARuntimeConfig(): OPARuntimeConfig {
-  const baseUrl = process.env.OPA_BASE_URL;
-  const teamName = process.env.OPA_TEAM_NAME;
-  const keyId = process.env.OPA_KEY_ID;
-  const keySecret = process.env.OPA_KEY_SECRET;
-  const resourceGroupId = process.env.OPA_RESOURCE_GROUP_ID;
-  const projectId = process.env.OPA_PROJECT_ID;
-  const folderId = process.env.OPA_FOLDER_ID;
-
-  if (!baseUrl || !teamName || !keyId || !keySecret || !resourceGroupId || !projectId) {
-    throw new Error(
-      'Missing OPA runtime configuration. Required environment variables:\n' +
-      '  OPA_BASE_URL, OPA_TEAM_NAME, OPA_KEY_ID, OPA_KEY_SECRET,\n' +
-      '  OPA_RESOURCE_GROUP_ID, OPA_PROJECT_ID\n\n' +
-      'Set up OPA secrets using the setup-opa-secrets script.'
-    );
+export function getOPALLMProvider(): 'anthropic' | 'bedrock' | null {
+  const provider = process.env.OPA_LLM_PROVIDER;
+  if (provider === 'anthropic' || provider === 'bedrock') {
+    return provider;
   }
-
-  return { baseUrl, teamName, keyId, keySecret, resourceGroupId, projectId, folderId };
+  return null;
 }
 
 // ============================================================================
-// Secret Retrieval Functions
+// Secret Retrieval via Token Exchange
 // ============================================================================
 
 /**
- * Retrieve a single secret by name
+ * Retrieve a vaulted secret by its ORN using token exchange
+ * @param idToken - The user's ID token (for delegation)
+ * @param secretOrn - The ORN of the secret (e.g., orn:okta:pam:{orgId}:secrets:{secretId})
+ * @param secretName - Optional name for logging
+ * @returns The secret value
  */
-export async function getSecretByName(
-  secretName: string,
-  config?: OPARuntimeConfig
+export async function getSecretByOrn(
+  idToken: string,
+  secretOrn: string,
+  secretName?: string
 ): Promise<string> {
-  const cfg = config || getOPARuntimeConfig();
-  const client = await createRuntimeClient(cfg);
-
-  const secret = await client.getSecretByName(
-    cfg.resourceGroupId,
-    cfg.projectId,
-    secretName,
-    cfg.folderId
-  );
-
-  if (!secret) {
-    throw new Error(`Secret not found: ${secretName}`);
-  }
-
-  const revealed = await client.revealSecret(
-    cfg.resourceGroupId,
-    cfg.projectId,
-    secret.id
-  );
-
-  return revealed.secret;
+  const handler = getTokenExchangeHandler();
+  return handler.exchangeIdTokenForVaultedSecret(idToken, secretOrn, secretName);
 }
 
 /**
- * Retrieve a secret by its ID
+ * Retrieve multiple secrets in parallel
+ * @param idToken - The user's ID token
+ * @param secrets - Array of {orn, name} pairs
+ * @returns Map of name to value
  */
-export async function getSecretById(
-  secretId: string,
-  config?: OPARuntimeConfig
-): Promise<RevealedSecret> {
-  const cfg = config || getOPARuntimeConfig();
-  const client = await createRuntimeClient(cfg);
+export async function getSecretsParallel(
+  idToken: string,
+  secrets: Array<{ orn: string; name: string }>
+): Promise<Map<string, string>> {
+  const handler = getTokenExchangeHandler();
+  const results = new Map<string, string>();
 
-  return client.revealSecret(cfg.resourceGroupId, cfg.projectId, secretId);
-}
+  const promises = secrets.map(async ({ orn, name }) => {
+    try {
+      const value = await handler.exchangeIdTokenForVaultedSecret(idToken, orn, name);
+      return { name, value, error: null };
+    } catch (error: any) {
+      return { name, value: null, error: error.message };
+    }
+  });
 
-/**
- * Retrieve multiple secrets by name
- */
-export async function getSecrets(
-  secretNames: string[],
-  config?: OPARuntimeConfig
-): Promise<Record<string, string>> {
-  const cfg = config || getOPARuntimeConfig();
-  const client = await createRuntimeClient(cfg);
-  const results: Record<string, string> = {};
+  const settled = await Promise.all(promises);
 
-  for (const name of secretNames) {
-    const secret = await client.getSecretByName(
-      cfg.resourceGroupId,
-      cfg.projectId,
-      name,
-      cfg.folderId
-    );
-
-    if (secret) {
-      const revealed = await client.revealSecret(
-        cfg.resourceGroupId,
-        cfg.projectId,
-        secret.id
-      );
-      results[name] = revealed.secret;
+  for (const result of settled) {
+    if (result.value) {
+      results.set(result.name, result.value);
+    } else {
+      console.error(`❌ Failed to fetch secret ${result.name}: ${result.error}`);
     }
   }
 
   return results;
 }
 
-/**
- * List all secret names in the configured folder
- */
-export async function listSecretNames(
-  config?: OPARuntimeConfig
-): Promise<string[]> {
-  const cfg = config || getOPARuntimeConfig();
-  const client = await createRuntimeClient(cfg);
-
-  const secrets = await client.listSecretsInProject(
-    cfg.resourceGroupId,
-    cfg.projectId,
-    cfg.folderId
-  );
-
-  return secrets.map(s => s.name);
-}
-
 // ============================================================================
-// LLM Credential Fetching
+// LLM Credential Fetching via Token Exchange
 // ============================================================================
 
 /**
- * Fetch LLM credentials from OPA
- * Returns null if OPA is not configured or secrets cannot be retrieved
+ * Fetch LLM credentials from OPA via token exchange
+ * @param idToken - The user's ID token (required for delegation)
+ * @param userId - Optional user ID for caching (defaults to extracting from token)
+ * @returns LLM credentials or null if not configured/failed
  */
-export async function fetchLLMCredentialsFromOPA(): Promise<LLMCredentials | null> {
+export async function fetchLLMCredentialsFromOPA(
+  idToken: string,
+  userId?: string
+): Promise<LLMCredentials | null> {
   if (!isOPAConfigured()) {
-    console.log('OPA secret management not configured, skipping...');
     return null;
   }
 
-  const provider = process.env.OPA_LLM_PROVIDER;
+  const provider = getOPALLMProvider();
+  if (!provider) {
+    console.error('OPA_LLM_PROVIDER not set or invalid');
+    return null;
+  }
 
-  console.log('Fetching LLM credentials from OPA...');
-  console.log(`  Provider: ${provider}`);
+  // Try to get user ID from token if not provided
+  const cacheKey = userId || extractUserIdFromToken(idToken) || 'default';
+
+  // Check cache first
+  const cached = getCachedCredentials(cacheKey, idToken);
+  if (cached) {
+    return cached;
+  }
 
   try {
+    let credentials: LLMCredentials;
+
     if (provider === 'anthropic') {
-      return await fetchAnthropicCredentials();
+      credentials = await fetchAnthropicCredentials(idToken);
     } else if (provider === 'bedrock') {
-      return await fetchBedrockCredentials();
+      credentials = await fetchBedrockCredentials(idToken);
     } else {
-      console.error(`Unknown LLM provider: ${provider}`);
       return null;
     }
-  } catch (error: any) {
-    console.error('Failed to fetch credentials from OPA:', error.message);
 
-    // Check for specific error types
-    if (error.message?.includes('401')) {
-      console.error('  OPA authentication failed - check OPA_KEY_ID and OPA_KEY_SECRET');
-    } else if (error.message?.includes('403')) {
-      console.error('  OPA authorization failed - check service user permissions');
-    } else if (error.message?.includes('ECONNREFUSED') || error.message?.includes('ENOTFOUND')) {
-      console.error('  Cannot connect to OPA server - check OPA_BASE_URL');
+    // Cache the credentials
+    cacheCredentials(cacheKey, idToken, credentials);
+    return credentials;
+  } catch (error: any) {
+    console.error('❌ Failed to fetch credentials from OPA:', error.message);
+
+    if (error.message?.includes('invalid_grant')) {
+      console.error('   Token exchange failed - check agent permissions and user authorization');
+    } else if (error.message?.includes('invalid_target')) {
+      console.error('   Invalid secret ORN - check OPA_*_ORN environment variables');
+    } else if (error.message?.includes('Empty secret')) {
+      console.error('   Secret exists but has empty value - check OPA secret configuration');
     }
 
     return null;
@@ -295,26 +257,49 @@ export async function fetchLLMCredentialsFromOPA(): Promise<LLMCredentials | nul
 }
 
 /**
- * Fetch Anthropic credentials from OPA
+ * Extract user ID from ID token (without full JWT parsing)
  */
-async function fetchAnthropicCredentials(): Promise<AnthropicCredentials> {
-  const apiKeySecretName = process.env.OPA_ANTHROPIC_SECRET_NAME || 'ANTHROPIC_API_KEY';
-  const modelSecretName = process.env.OPA_ANTHROPIC_MODEL_SECRET_NAME;
+function extractUserIdFromToken(idToken: string): string | null {
+  try {
+    const parts = idToken.split('.');
+    if (parts.length !== 3) return null;
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString());
+    return payload.sub || null;
+  } catch {
+    return null;
+  }
+}
 
-  console.log(`  Fetching Anthropic API key (secret: ${apiKeySecretName})`);
-  const apiKey = await getSecretByName(apiKeySecretName);
-
-  // Fetch model from OPA if configured, otherwise fall back to env var
-  let model: string;
-  if (modelSecretName) {
-    console.log(`  Fetching Anthropic model (secret: ${modelSecretName})`);
-    model = await getSecretByName(modelSecretName);
-  } else {
-    model = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-5-20250929';
-    console.log(`  Using model from env: ${model}`);
+/**
+ * Fetch Anthropic credentials from OPA via token exchange (parallel)
+ */
+async function fetchAnthropicCredentials(idToken: string): Promise<AnthropicCredentials> {
+  const apiKeyOrn = process.env.OPA_ANTHROPIC_API_KEY_ORN;
+  if (!apiKeyOrn) {
+    throw new Error('OPA_ANTHROPIC_API_KEY_ORN not configured');
   }
 
-  console.log('Successfully retrieved Anthropic credentials from OPA');
+  const modelOrn = process.env.OPA_ANTHROPIC_MODEL_ORN;
+  const defaultModel = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-5-20250929';
+
+  // Build list of secrets to fetch
+  const secretsToFetch: Array<{ orn: string; name: string }> = [
+    { orn: apiKeyOrn, name: 'ANTHROPIC_API_KEY' },
+  ];
+
+  if (modelOrn) {
+    secretsToFetch.push({ orn: modelOrn, name: 'ANTHROPIC_MODEL' });
+  }
+
+  // Fetch all secrets in parallel
+  const secrets = await getSecretsParallel(idToken, secretsToFetch);
+
+  const apiKey = secrets.get('ANTHROPIC_API_KEY');
+  if (!apiKey) {
+    throw new Error('Failed to retrieve ANTHROPIC_API_KEY from OPA');
+  }
+
+  const model = secrets.get('ANTHROPIC_MODEL') || defaultModel;
 
   return {
     provider: 'anthropic',
@@ -324,34 +309,43 @@ async function fetchAnthropicCredentials(): Promise<AnthropicCredentials> {
 }
 
 /**
- * Fetch AWS Bedrock credentials from OPA
+ * Fetch AWS Bedrock credentials from OPA via token exchange (parallel)
  */
-async function fetchBedrockCredentials(): Promise<BedrockCredentials> {
-  const accessKeySecretName = process.env.OPA_AWS_ACCESS_KEY_ID_SECRET_NAME || 'AWS_ACCESS_KEY_ID';
-  const secretKeySecretName = process.env.OPA_AWS_SECRET_ACCESS_KEY_SECRET_NAME || 'AWS_SECRET_ACCESS_KEY';
-  const sessionTokenSecretName = process.env.OPA_AWS_SESSION_TOKEN_SECRET_NAME;
-  const awsRegion = process.env.AWS_REGION || 'us-east-1';
-  const bedrockModelId = process.env.BEDROCK_MODEL_ID || 'us.anthropic.claude-3-5-sonnet-20241022-v2:0';
+async function fetchBedrockCredentials(idToken: string): Promise<BedrockCredentials> {
+  const accessKeyOrn = process.env.OPA_AWS_ACCESS_KEY_ORN;
+  const secretKeyOrn = process.env.OPA_AWS_SECRET_ACCESS_KEY_ORN;
+  const sessionTokenOrn = process.env.OPA_AWS_SESSION_TOKEN_ORN;
 
-  console.log('  Fetching AWS credentials from OPA...');
-
-  // Fetch required credentials
-  const secretNames = [accessKeySecretName, secretKeySecretName];
-  if (sessionTokenSecretName) {
-    secretNames.push(sessionTokenSecretName);
+  if (!accessKeyOrn || !secretKeyOrn) {
+    throw new Error('OPA_AWS_ACCESS_KEY_ORN and OPA_AWS_SECRET_ACCESS_KEY_ORN must be configured');
   }
 
-  const secrets = await getSecrets(secretNames);
+  // Build list of secrets to fetch
+  const secretsToFetch: Array<{ orn: string; name: string }> = [
+    { orn: accessKeyOrn, name: 'AWS_ACCESS_KEY_ID' },
+    { orn: secretKeyOrn, name: 'AWS_SECRET_ACCESS_KEY' },
+  ];
 
-  const awsAccessKeyId = secrets[accessKeySecretName];
-  const awsSecretAccessKey = secrets[secretKeySecretName];
-  const awsSessionToken = sessionTokenSecretName ? secrets[sessionTokenSecretName] : undefined;
+  if (sessionTokenOrn) {
+    secretsToFetch.push({ orn: sessionTokenOrn, name: 'AWS_SESSION_TOKEN' });
+  }
+
+  // Fetch all secrets in parallel
+  const secrets = await getSecretsParallel(idToken, secretsToFetch);
+
+  const awsAccessKeyId = secrets.get('AWS_ACCESS_KEY_ID');
+  const awsSecretAccessKey = secrets.get('AWS_SECRET_ACCESS_KEY');
 
   if (!awsAccessKeyId || !awsSecretAccessKey) {
-    throw new Error('Failed to retrieve AWS credentials from OPA');
+    const missing = [];
+    if (!awsAccessKeyId) missing.push('AWS_ACCESS_KEY_ID');
+    if (!awsSecretAccessKey) missing.push('AWS_SECRET_ACCESS_KEY');
+    throw new Error(`Failed to retrieve ${missing.join(', ')} from OPA`);
   }
 
-  console.log('Successfully retrieved AWS Bedrock credentials from OPA');
+  const awsSessionToken = secrets.get('AWS_SESSION_TOKEN');
+  const awsRegion = process.env.AWS_REGION || 'us-east-1';
+  const bedrockModelId = process.env.BEDROCK_MODEL_ID || 'us.anthropic.claude-3-5-sonnet-20241022-v2:0';
 
   return {
     provider: 'bedrock',
@@ -362,6 +356,3 @@ async function fetchBedrockCredentials(): Promise<BedrockCredentials> {
     bedrockModelId,
   };
 }
-
-// Re-export types from opa-api for convenience
-export type { RevealedSecret } from './opa-api.js';
