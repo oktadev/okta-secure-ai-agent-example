@@ -2,6 +2,7 @@
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import express from 'express';
+import helmet from 'helmet';
 import * as dotenv from 'dotenv';
 import * as path from 'path';
 import { mcpAuthMetadataRouter, getOAuthProtectedResourceMetadataUrl } from '@modelcontextprotocol/sdk/server/auth/router.js';
@@ -340,6 +341,11 @@ async function bootstrap(): Promise<void> {
   registerTools(verifyAccessTokenWithScopes);
 
   const app = express();
+
+  // Security headers via helmet (API server - restrictive CSP since no HTML served)
+  app.use(helmet({
+    contentSecurityPolicy: { directives: { defaultSrc: ["'none'"] } },
+  }));
 
   // Map to store transports by session ID
   const transports: Record<string, StreamableHTTPServerTransport> = {};

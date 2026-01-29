@@ -2,6 +2,7 @@
 import express, { Request, Response } from 'express';
 import * as path from 'path';
 import cookieParser from 'cookie-parser';
+import helmet from 'helmet';
 import { getAgentForSession } from './agent.js';
 import { OktaAuthHelper, OktaConfig, createSessionMiddleware } from './auth/okta-auth.js';
 
@@ -155,6 +156,18 @@ export class AppServer {
   // ============================================================================
 
   private setupMiddleware(): void {
+    // Security headers via helmet (uses secure defaults, we only override CSP)
+    this.app.use(helmet({
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'", "https://cdn.jsdelivr.net"],
+          styleSrc: ["'self'", "'unsafe-inline'"],
+          connectSrc: ["'self'", "http://localhost:3000", "http://127.0.0.1:3000"],
+        },
+      },
+    }));
+
     this.app.use(express.json());
     this.app.use(cookieParser());
     this.app.use(createSessionMiddleware(this.config.sessionSecret));
