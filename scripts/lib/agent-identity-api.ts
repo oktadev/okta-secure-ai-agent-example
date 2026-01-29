@@ -54,8 +54,8 @@ export interface CreateConnectionRequest {
   connectionType: string;
   authorizationServer: {
     orn: string;
-    resourceIndicator: string;
   };
+  resourceIndicator: string;
   scopeCondition: string;
   scopes: string[];
 }

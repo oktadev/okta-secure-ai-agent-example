@@ -4,7 +4,7 @@
   "main": "dist/app-server.js",
   "types": "dist/app-server.d.ts",
   "scripts": {
-    "build": "tsc",
+    "build": "prisma generate && tsc",
     "start": "node dist/app-server.js",
     "start:mcp": "node dist/mcp-server.js",
     "dev:mcp": "tsc && node dist/mcp-server.js",
