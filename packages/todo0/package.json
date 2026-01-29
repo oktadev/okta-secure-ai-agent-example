@@ -25,6 +25,7 @@
     "ejs": "^3.1.10",
     "express": "^5.1.0",
     "express-session": "^1.18.2",
+    "helmet": "^8.0.0",
     "openid-client": "^5.7.1",
     "prisma": "^6.16.3",
     "zod": "^3.22.4"

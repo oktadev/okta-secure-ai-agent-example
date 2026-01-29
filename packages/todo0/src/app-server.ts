@@ -2,6 +2,7 @@ import express from 'express';
 import path from 'path';
 import bodyParser from 'body-parser';
 import session from 'express-session';
+import helmet from 'helmet';
 import { randomUUID } from 'crypto';
 import * as dotenv from 'dotenv';
 import { createRequireAuth } from './middleware/requireAuth';
@@ -125,7 +126,19 @@ const app = express();
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, '../views'));
 
-// Logging middleware - must come first
+// Security headers via helmet (uses secure defaults, we only override CSP)
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      formAction: null, // Disable form-action restriction (needed for OAuth redirects)
+    },
+  },
+}));
+
+// Logging middleware
 app.use((req, _res, next) => {
   console.log(`[REQUEST] ${req.method} ${req.url}`);
   console.log(`[REQUEST] Path: ${req.path}`);

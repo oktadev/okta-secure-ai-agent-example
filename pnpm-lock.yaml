@@ -105,6 +105,9 @@ importers:
       express-session:
         specifier: 1.17.3
         version: 1.17.3
+      helmet:
+        specifier: ^8.0.0
+        version: 8.1.0
       jose:
         specifier: ^6.1.0
         version: 6.1.0
@@ -166,6 +169,9 @@ importers:
       express-session:
         specifier: ^1.18.2
         version: 1.18.2
+      helmet:
+        specifier: ^8.0.0
+        version: 8.1.0
       openid-client:
         specifier: ^5.7.1
         version: 5.7.1
@@ -1262,6 +1268,10 @@ packages:
   hasown@2.0.2:
     resolution: {integrity: sha512-0hJU9SCPvmMzIBdZFqNPXWa6dqh7WdH0cII9y+CyS8rG3nL48Bclra9HmKhVVUHyPWNH5Y7xDwAB7bfgSjkUMQ==}
     engines: {node: '>= 0.4'}
+
+  helmet@8.1.0:
+    resolution: {integrity: sha512-jOiHyAZsmnr8LqoPGmCjYAaiuWwjAPLgY8ZX2XrmHawt99/u1y6RgrZMTeoPfpUbV96HOalYgz1qzkRbw54Pmg==}
+    engines: {node: '>=18.0.0'}
 
   http-errors@2.0.0:
     resolution: {integrity: sha512-FtwrG/euBzaEjYeRqOgly7G0qviiXoJWnvEH2Z1plBdXgbyjv34pHTSb9zoeHMyDy33+DWy5Wt9Wo+TURtOYSQ==}
@@ -3451,6 +3461,8 @@ snapshots:
   hasown@2.0.2:
     dependencies:
       function-bind: 1.1.2
+
+  helmet@8.1.0: {}
 
   http-errors@2.0.0:
     dependencies:
