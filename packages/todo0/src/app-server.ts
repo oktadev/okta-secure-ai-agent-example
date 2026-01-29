@@ -2,6 +2,7 @@ import express from 'express';
 import path from 'path';
 import bodyParser from 'body-parser';
 import session from 'express-session';
+import { randomUUID } from 'crypto';
 import * as dotenv from 'dotenv';
 import { createRequireAuth } from './middleware/requireAuth';
 import { createAuthRouter } from './routes/auth';
@@ -108,6 +109,7 @@ declare module 'express-session' {
     id_token?: string;
     userId?: string;      // User's Okta sub claim for user-scoped operations
     userEmail?: string;   // User's email for display
+    csrfToken?: string;   // CSRF protection token
     pkce?: {
       code_verifier: string;
       state: string;
@@ -143,6 +145,26 @@ app.use(session({
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(express.json()); // Enable JSON body parsing for API routes
 app.use(express.static(path.join(__dirname, '../public')));
+
+// CSRF Protection: Generate token and make available to views
+app.use((req, res, next) => {
+  if (!req.session.csrfToken) {
+    req.session.csrfToken = randomUUID();
+  }
+  res.locals.csrfToken = req.session.csrfToken;
+  next();
+});
+
+// CSRF Protection: Validate token on state-changing requests
+app.use((req, res, next) => {
+  if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method)) {
+    const token = req.body?._csrf || req.headers['x-csrf-token'];
+    if (token !== req.session.csrfToken) {
+      return res.status(403).send('Invalid CSRF token');
+    }
+  }
+  next();
+});
 
 console.log('[SERVER] Registering routes...');
 app.use('/', todosRouter);
