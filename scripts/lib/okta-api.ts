@@ -2,7 +2,6 @@ import {
   Client,
   AuthorizationServer,
   Application,
-  OpenIdConnectApplication,
   OAuth2Scope,
   AuthorizationServerPolicyRule
 } from '@okta/okta-sdk-nodejs';
@@ -237,7 +236,7 @@ export class OktaAPIClient {
   /**
    * Upload public key to application for private key JWT authentication
    */
-  async uploadPublicKey(appId: string, publicKeyPem: string): Promise<{ kid: string }> {
+  async uploadPublicKey(appId: string, _publicKeyPem: string): Promise<{ kid: string }> {
     const result = await this.client.applicationApi.generateApplicationKey({
       appId,
       validityYears: 2,

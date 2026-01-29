@@ -486,40 +486,7 @@ function addMessageToDOM(text, type = 'assistant', data = null, saveToHistory = 
     
     const contentDiv = document.createElement('div');
     contentDiv.className = 'message-content';
-    
-    // Check if data contains MCP UI resources
-    if (data && data.resources) {
-        // Render MCP UI resources
-        let html = '<div class="mcp-ui-container">';
-        html += '<div class="mcp-ui-label">📦 MCP Resources:</div>';
-        data.resources.forEach((resource, index) => {
-            html += `<ui-resource-renderer id="renderer-${Date.now()}-${index}"></ui-resource-renderer>`;
-        });
-        html += '</div>';
-        contentDiv.innerHTML = html;
-        
-        // After adding to DOM, set the resource properties
-        messageDiv.appendChild(contentDiv);
-        chatContainer.appendChild(messageDiv);
-        
-        // Set resource data on each renderer
-        setTimeout(() => {
-            data.resources.forEach((resource, index) => {
-                const renderer = document.getElementById(`renderer-${Date.now()}-${index}`);
-                if (renderer) {
-                    renderer.resource = resource;
-                    renderer.addEventListener('onUIAction', (event) => {
-                        console.log('UI Action:', event.detail);
-                        handleUIAction(event.detail);
-                    });
-                }
-            });
-        }, 0);
-        
-        chatContainer.scrollTop = chatContainer.scrollHeight;
-        return;
-    }
-    
+
     if (data && data.todos) {
         // Format todos nicely
         let html = `<strong>Found ${escapeHtml(data.count)} todo(s):</strong><br><br>`;
@@ -598,22 +565,6 @@ function addMessageToDOM(text, type = 'assistant', data = null, saveToHistory = 
     messageDiv.appendChild(contentDiv);
     chatContainer.appendChild(messageDiv);
     chatContainer.scrollTop = chatContainer.scrollHeight;
-}
-
-// Handle UI actions from MCP UI components
-function handleUIAction(action) {
-    console.log('Received UI action:', action);
-    
-    // Display the action as a user message and process it
-    if (action.type === 'submit' || action.type === 'button_click') {
-        const actionMessage = action.value || action.label || 'Action triggered';
-        addMessage(`🎯 Action: ${actionMessage}`, 'user');
-        
-        // Process the action as if it were a user message
-        if (action.value) {
-            processMessage(action.value);
-        }
-    }
 }
 
 // Process message with LLM

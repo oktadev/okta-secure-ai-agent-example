@@ -126,7 +126,7 @@ app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, '../views'));
 
 // Logging middleware - must come first
-app.use((req, res, next) => {
+app.use((req, _res, next) => {
   console.log(`[REQUEST] ${req.method} ${req.url}`);
   console.log(`[REQUEST] Path: ${req.path}`);
   // Only log headers (contains Authorization, Cookie) in debug mode

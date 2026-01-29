@@ -29,7 +29,7 @@ async function getClientConfig(config: AuthConfig): Promise<Client> {
 }
 
 export function createAuthRouter(config: AuthConfig): Router {
-  const { oktaIssuer, oktaClientId, oktaClientSecret, oktaRedirectUri } = config;
+  const { oktaIssuer, oktaClientId, oktaRedirectUri } = config;
 
   console.log('🔐 Okta Auth Configuration:');
   console.log(`   Issuer: ${oktaIssuer}`);

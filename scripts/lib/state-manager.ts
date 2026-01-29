@@ -1,5 +1,4 @@
 import * as fs from 'fs';
-import * as path from 'path';
 
 /**
  * Agent connection info for rollback

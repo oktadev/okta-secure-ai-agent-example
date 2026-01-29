@@ -6,7 +6,7 @@
  * available in the public @okta/okta-sdk-nodejs package.
  */
 
-import axios, { AxiosInstance } from 'axios';
+import axios from 'axios';
 import * as jose from 'jose';
 
 // ============================================================================
@@ -87,12 +87,10 @@ export interface AgentIdentityConfig {
 // ============================================================================
 
 export class AgentIdentityAPIClient {
-  private oktaDomain: string;
   private apiToken: string;
   private baseUrl: string;
 
   constructor(config: AgentIdentityConfig) {
-    this.oktaDomain = config.oktaDomain;
     this.apiToken = config.apiToken;
     this.baseUrl = `https://${config.oktaDomain}`;
   }

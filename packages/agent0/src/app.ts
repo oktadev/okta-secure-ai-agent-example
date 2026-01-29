@@ -173,10 +173,7 @@ export class AppServer {
 
     // Serve static files (web UI)
     const publicPath = path.join(__dirname, '..', 'public');
-    const nodeModulesPath = path.join(__dirname, '..', '..', 'node_modules');
-
     this.app.use(express.static(publicPath));
-    this.app.use('/node_modules', express.static(nodeModulesPath));
   }
 
   // ============================================================================
