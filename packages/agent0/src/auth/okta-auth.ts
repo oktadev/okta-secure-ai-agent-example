@@ -259,7 +259,7 @@ export class OktaAuthHelper {
         });
       } catch (error: any) {
         console.error('Logout error:', error);
-        req.session.destroy((err) => {
+        req.session.destroy((_err) => {
           res.redirect('/');
         });
       }
