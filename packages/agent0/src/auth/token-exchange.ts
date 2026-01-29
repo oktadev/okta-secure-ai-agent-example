@@ -6,6 +6,10 @@ import { randomUUID } from 'crypto';
 import jwt from 'jsonwebtoken';
 import axios from 'axios';
 
+// Debug mode for verbose auth logging - OFF by default for security
+// Set AUTH_DEBUG=true to enable detailed logging (includes sensitive data)
+const AUTH_DEBUG = process.env.AUTH_DEBUG === 'true';
+
 // ============================================================================
 // Scope Challenge Types and Parser (MCP Authorization Best Practices)
 // ============================================================================
@@ -231,7 +235,10 @@ export class TokenExchangeHandler {
       throw new Error('Cross-app access not configured properly. Private key not loaded.');
     }
 
-    console.log(`👻 Subject token: ${idToken}`);
+    // Only log tokens in debug mode - contains sensitive credentials
+    if (AUTH_DEBUG) {
+      console.log(`👻 Subject token: ${idToken}`);
+    }
     if (requestedScopes) {
       console.log(`🔄 Step-up authorization requested with scopes: ${requestedScopes}`);
     }
