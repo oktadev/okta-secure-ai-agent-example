@@ -10,6 +10,10 @@ import { createTodosRouter } from './routes/todos';
 // Load environment variables from .env.app
 dotenv.config({ path: path.resolve(__dirname, '../.env.app') });
 
+// Debug mode for verbose request logging - OFF by default for security
+// Set AUTH_DEBUG=true to enable detailed logging (includes sensitive data)
+const AUTH_DEBUG = process.env.AUTH_DEBUG === 'true';
+
 /**
  * Configuration interface for app server
  */
@@ -123,7 +127,10 @@ app.set('views', path.join(__dirname, '../views'));
 app.use((req, res, next) => {
   console.log(`[REQUEST] ${req.method} ${req.url}`);
   console.log(`[REQUEST] Path: ${req.path}`);
-  console.log(`[REQUEST] Headers:`, req.headers);
+  // Only log headers (contains Authorization, Cookie) in debug mode
+  if (AUTH_DEBUG) {
+    console.log(`[REQUEST] Headers:`, req.headers);
+  }
   next();
 });
 

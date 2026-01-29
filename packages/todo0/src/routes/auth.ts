@@ -1,6 +1,10 @@
 import { Router } from 'express';
 import { Issuer, generators, Client } from 'openid-client';
 
+// Debug mode for verbose auth logging - OFF by default for security
+// Set AUTH_DEBUG=true to enable detailed logging (includes sensitive data)
+const AUTH_DEBUG = process.env.AUTH_DEBUG === 'true';
+
 export interface AuthConfig {
   oktaIssuer: string;
   oktaClientId: string;
@@ -72,7 +76,10 @@ router.get('/login', async (req, res) => {
 
 router.get('/callback', async (req, res) => {
   console.log('[AUTH] /callback route hit');
-  console.log('[AUTH] Query params:', req.query);
+  // Only log query params (contains authorization code) in debug mode
+  if (AUTH_DEBUG) {
+    console.log('[AUTH] Query params:', req.query);
+  }
   
   const { code, error, error_description } = req.query;
   
@@ -171,7 +178,10 @@ router.post('/logout', async (req, res) => {
       }
       
       console.log('[AUTH] Session destroyed');
-      console.log('[AUTH] Redirecting to Okta logout:', logoutUrl);
+      // Only log logout URL (contains id_token_hint) in debug mode
+      if (AUTH_DEBUG) {
+        console.log('[AUTH] Redirecting to Okta logout:', logoutUrl);
+      }
       res.redirect(logoutUrl);
     });
   } catch (err: any) {
