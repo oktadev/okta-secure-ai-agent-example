@@ -3,6 +3,10 @@
 import axios from 'axios';
 import * as jose from 'jose';
 // ============================================================================
+// Constants
+// ============================================================================
+const DEFAULT_TIMEOUT = 30000; // 30 seconds
+// ============================================================================
 // OPA API Client
 // ============================================================================
 export class OPAClient {
@@ -11,13 +15,49 @@ export class OPAClient {
             ...config,
             baseUrl: config.baseUrl.replace(/\/+$/, ''),
         };
+        const timeout = config.timeout ?? DEFAULT_TIMEOUT;
         this.client = axios.create({
             baseURL: this.config.baseUrl,
+            timeout,
             headers: {
                 'Authorization': `Bearer ${config.token}`,
                 'Content-Type': 'application/json',
                 'Accept': 'application/json',
             },
+        });
+        // Add response interceptor for better error handling
+        this.client.interceptors.response.use((response) => response, (error) => {
+            if (error.code === 'ECONNABORTED') {
+                const timeoutError = new Error(`Request timed out after ${timeout}ms. The OPA API may be slow or unreachable.`);
+                timeoutError.code = 'ETIMEDOUT';
+                throw timeoutError;
+            }
+            if (error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED') {
+                throw new Error(`Cannot connect to OPA API at ${this.config.baseUrl}. ` +
+                    `Please check the URL and network connectivity.`);
+            }
+            // Handle HTTP errors with better messages
+            if (error.response) {
+                const status = error.response.status;
+                const message = error.response.data?.message || error.response.statusText;
+                if (status === 401) {
+                    throw new Error(`Authentication failed (401). The bearer token may have expired. ` +
+                        `Please get a fresh token from the OPA dashboard.`);
+                }
+                if (status === 403) {
+                    throw new Error(`Access denied (403). You don't have permission for this operation. ` +
+                        `Details: ${message}`);
+                }
+                if (status === 404) {
+                    throw new Error(`Resource not found (404). The requested resource may not exist. ` +
+                        `Details: ${message}`);
+                }
+                if (status >= 500) {
+                    throw new Error(`OPA server error (${status}). Please try again later. ` +
+                        `Details: ${message}`);
+                }
+            }
+            throw error;
         });
     }
     // ==========================================================================
@@ -132,7 +172,8 @@ export class OPAClient {
         return response.data;
     }
     async updateSecret(resourceGroupId, projectId, secretId, input) {
-        const response = await this.client.patch(`/v1/teams/${this.config.teamName}/resource_groups/${resourceGroupId}/projects/${projectId}/secrets/${secretId}`, input);
+        // OPA API uses PUT for updates with full object replacement
+        const response = await this.client.put(`/v1/teams/${this.config.teamName}/resource_groups/${resourceGroupId}/projects/${projectId}/secrets/${secretId}`, input);
         return response.data;
     }
     async createSecretWithEncryption(resourceGroupId, projectId, name, value, parentFolderId, description, keyName = 'secret') {
@@ -144,9 +185,13 @@ export class OPAClient {
             description,
         });
     }
-    async updateSecretWithEncryption(resourceGroupId, projectId, secretId, value, description, keyName = 'secret') {
+    async updateSecretWithEncryption(resourceGroupId, projectId, secretId, name, value, parentFolderId, description, keyName = 'secret') {
         const secretJwe = await this.encryptSecretValue(value, keyName);
-        const input = { secret_jwe: secretJwe };
+        const input = {
+            name,
+            secret_jwe: secretJwe,
+            parent_folder_id: parentFolderId,
+        };
         if (description !== undefined) {
             input.description = description;
         }

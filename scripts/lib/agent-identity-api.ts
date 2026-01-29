@@ -60,15 +60,25 @@ export interface CreateConnectionRequest {
   scopes: string[];
 }
 
+export interface CreateVaultSecretConnectionRequest {
+  connectionType: 'STS_VAULT_SECRET';
+  resource: {
+    orn: string;
+  };
+}
+
 export interface AgentConnection {
   id: string;
   connectionType: string;
-  authorizationServer: {
+  authorizationServer?: {
     orn: string;
   };
-  resourceIndicator: string;
-  scopeCondition: string;
-  scopes: string[];
+  resource?: {
+    orn: string;
+  };
+  resourceIndicator?: string;
+  scopeCondition?: string;
+  scopes?: string[];
   status: string;
 }
 
@@ -349,21 +359,45 @@ export class AgentIdentityAPIClient {
   }
 
   /**
-   * Deactivate a connection between agent and authorization server
+   * Create a vault secret connection between agent and OPA secret
    */
-  async deactivateConnection(agentId: string, connectionId: string): Promise<void> {
+  async createVaultSecretConnection(
+    agentId: string,
+    secretOrn: string
+  ): Promise<AgentConnection> {
+    const request: CreateVaultSecretConnectionRequest = {
+      connectionType: 'STS_VAULT_SECRET',
+      resource: {
+        orn: secretOrn,
+      },
+    };
+
     try {
       const response = await axios.post(
-        `${this.baseUrl}/workload-principals/api/v1/ai-agents/${agentId}/connections/${connectionId}/lifecycle/deactivate`,
-        {},
+        `${this.baseUrl}/workload-principals/api/v1/ai-agents/${agentId}/connections`,
+        request,
         this.getAxiosConfig()
       );
 
-      if (response.status !== 200) {
-        throw new Error(`Unexpected status: ${response.status}`);
-      }
+      return response.data as AgentConnection;
     } catch (error: any) {
-      this.handleAxiosError(error, 'Deactivate connection');
+      this.handleAxiosError(error, 'Create vault secret connection', request);
+    }
+  }
+
+  /**
+   * List all connections for an agent
+   */
+  async listConnections(agentId: string): Promise<AgentConnection[]> {
+    try {
+      const response = await axios.get(
+        `${this.baseUrl}/workload-principals/api/v1/ai-agents/${agentId}/connections`,
+        this.getAxiosConfig()
+      );
+
+      return response.data as AgentConnection[];
+    } catch (error: any) {
+      this.handleAxiosError(error, 'List connections');
     }
   }
 
@@ -573,4 +607,11 @@ export async function convertPublicKeyToJWK(publicKeyPem: string): Promise<jose.
  */
 export function constructAuthServerORN(orgId: string, authServerId: string): string {
   return `orn:okta:idp:${orgId}:authorization_servers:${authServerId}`;
+}
+
+/**
+ * Construct an Okta Resource Name (ORN) for a PAM vault secret
+ */
+export function constructPamSecretORN(orgId: string, secretId: string): string {
+  return `orn:okta:pam:${orgId}:secrets:${secretId}`;
 }

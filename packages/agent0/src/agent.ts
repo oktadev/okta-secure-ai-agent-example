@@ -145,11 +145,24 @@ function validateAgentLLMEnv(): AgentLLMConfig {
 
   // Error if neither provider is configured
   if (!hasAnthropicKey && !hasBedrockVars) {
-    console.error('❌ Environment configuration error in .env.agent');
-    console.error('   No LLM provider configured');
-    console.error('   Please configure one LLM provider:');
-    console.error('   - For Anthropic: Set ANTHROPIC_API_KEY and ANTHROPIC_MODEL');
-    console.error('   - For Bedrock: Set AWS_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, BEDROCK_MODEL_ID');
+    console.error('❌ No LLM credentials configured\n');
+    console.error('   You have two options to configure LLM credentials:\n');
+    console.error('   Option 1: Direct Mode (simple, credentials in .env.agent)');
+    console.error('   ─────────────────────────────────────────────────────────');
+    console.error('   For Anthropic:');
+    console.error('     ANTHROPIC_API_KEY=sk-ant-...');
+    console.error('     ANTHROPIC_MODEL=claude-sonnet-4-20250514\n');
+    console.error('   For AWS Bedrock:');
+    console.error('     AWS_REGION=us-east-1');
+    console.error('     AWS_ACCESS_KEY_ID=AKIA...');
+    console.error('     AWS_SECRET_ACCESS_KEY=...');
+    console.error('     BEDROCK_MODEL_ID=anthropic.claude-3-sonnet-20240229-v1:0\n');
+    console.error('   Option 2: OPA Mode (secure, credentials from Okta PAM)');
+    console.error('   ─────────────────────────────────────────────────────────');
+    console.error('   Requires .env.opa with:');
+    console.error('     OPA_LLM_PROVIDER=anthropic');
+    console.error('     OPA_ANTHROPIC_API_KEY_ORN=orn:okta:pam:{orgId}:secrets:{secretId}\n');
+    console.error('   Run: pnpm run setup:opa (then link secrets to agent)\n');
     process.exit(1);
   }
 
@@ -263,23 +276,18 @@ export function isLLMConfigInitialized(): boolean {
   return llmConfigInitialized;
 }
 
-// Try synchronous initialization at module load (for backwards compatibility)
-// This will only work if env vars are set and OPA is not configured
-// Try synchronous initialization from env vars at module load
-// OPA credentials are fetched per-user-session, so we don't init them here
-try {
-  if (!isOPAConfigured()) {
-    // No OPA configured, must use env vars
-    llmConfig = validateAgentLLMEnv();
-    llmConfigSource = 'env';
-    llmConfigInitialized = true;
-  }
-  // If OPA is configured, credentials will be fetched in getAgentForUserContext()
-} catch {
-  // If env var init fails and OPA is configured, that's fine - will use OPA per-session
-  if (!isOPAConfigured()) {
-    console.error('LLM configuration failed - no env vars configured and OPA not available');
-  }
+// Initialize LLM configuration at module load
+// OPA credentials are fetched per-user-session, env vars are loaded at startup
+if (isOPAConfigured()) {
+  // OPA mode: credentials will be fetched per-user via token exchange
+  console.log('🔐 OPA mode enabled - LLM credentials will be fetched per-user session');
+  llmConfigInitialized = true;
+  llmConfigSource = 'opa';
+} else {
+  // Direct mode: validate and load env vars now
+  llmConfig = validateAgentLLMEnv();
+  llmConfigSource = 'env';
+  llmConfigInitialized = true;
 }
 
 // ============================================================================
@@ -373,15 +381,12 @@ function buildAgentConfig(): Omit<AgentConfig, 'idToken' | 'userContext'> | null
 }
 
 export async function getAgentForUserContext(idToken: string, userContext: UserContext): Promise<Agent> {
-  // Try OPA token exchange for credential retrieval (per-user-session)
+  // OPA mode: fetch credentials via token exchange (per-user-session)
   if (isOPAConfigured()) {
-    console.log('\n🔐 OPA secret management detected, fetching credentials via token exchange...');
-
     try {
       const opaCredentials = await fetchLLMCredentialsFromOPA(idToken);
 
       if (opaCredentials) {
-        // Build config from OPA credentials
         const baseConfig = {
           mcpServerUrl: process.env.MCP_SERVER_URL || '',
           name: 'agent0',
@@ -412,7 +417,6 @@ export async function getAgentForUserContext(idToken: string, userContext: UserC
         }
 
         llmConfigSource = 'opa';
-        console.log('✅ Agent configured with OPA credentials');
         return new Agent(agentConfig);
       }
     } catch (error: any) {

@@ -20,6 +20,11 @@ import ora from 'ora';
 import * as fs from 'fs';
 import * as path from 'path';
 import { OPAClient, createOPAClientFromCredentials } from './lib/opa-api.js';
+import {
+  AgentIdentityAPIClient,
+  constructPamSecretORN,
+} from './lib/agent-identity-api.js';
+import { loadRollbackState, updateRollbackState } from './lib/state-manager.js';
 
 // ============================================================================
 // Configuration
@@ -614,11 +619,172 @@ OPA_ANTHROPIC_SECRET_NAME=ANTHROPIC_API_KEY
       }
     }
 
+    // Offer to link secrets to agent identity
+    if (Object.keys(result.secretIds).length > 0) {
+      await promptLinkSecrets(result.secretIds);
+    }
+
   } catch (error: unknown) {
     const err = error as { response?: { data?: { message?: string } }; message?: string };
     console.error(chalk.red(`\nSetup failed: ${err.response?.data?.message || err.message}`));
     process.exit(1);
   }
+}
+
+// ============================================================================
+// Link Secrets to Agent
+// ============================================================================
+
+/**
+ * Prompt user to link secrets to agent
+ * This creates STS_VAULT_SECRET connections so the agent can retrieve secrets via token exchange
+ */
+async function promptLinkSecrets(secretIds: Record<string, string>): Promise<void> {
+  // Check if we have an agent from bootstrap
+  let rollbackState;
+  try {
+    rollbackState = loadRollbackState('');
+    if (!rollbackState.agentIdentityIds || rollbackState.agentIdentityIds.length === 0) {
+      console.log(chalk.gray('\nNo agent found. Run bootstrap:okta first, then link:opa to connect secrets.'));
+      return;
+    }
+  } catch {
+    console.log(chalk.gray('\nNo bootstrap state found. Run bootstrap:okta first, then link:opa to connect secrets.'));
+    return;
+  }
+
+  console.log(chalk.bold('\n🔗 Link Secrets to Agent'));
+  console.log(chalk.gray('This allows your agent to retrieve secrets via token exchange.'));
+
+  const linkAnswer = await prompts({
+    type: 'confirm',
+    name: 'link',
+    message: 'Link these secrets to your agent now?',
+    initial: true,
+  });
+
+  if (!linkAnswer.link) {
+    console.log(chalk.yellow('\nSkipped. Run `pnpm run link:opa` later to link secrets.'));
+    return;
+  }
+
+  // Need Okta API token for agent identity API
+  const authAnswer = await prompts({
+    type: 'password',
+    name: 'apiToken',
+    message: 'Enter your Okta API token:',
+    validate: (v) => !!v || 'API token is required',
+  });
+
+  if (!authAnswer.apiToken) {
+    console.log(chalk.yellow('\nSkipped. Run `pnpm run link:opa` later to link secrets.'));
+    return;
+  }
+
+  const agentId = rollbackState.agentIdentityIds[0];
+  const oktaDomain = rollbackState.oktaDomain;
+
+  const agentClient = new AgentIdentityAPIClient({
+    oktaDomain,
+    apiToken: authAnswer.apiToken,
+  });
+
+  // Get org ID (cached in rollback state or fetch from API)
+  let orgId = rollbackState.orgId;
+  let spinner: ReturnType<typeof ora>;
+
+  if (!orgId) {
+    spinner = ora('Fetching org ID...').start();
+    try {
+      const orgMetadata = await agentClient.getOrgMetadata();
+      orgId = orgMetadata.id;
+      updateRollbackState(rollbackState, { orgId });
+      spinner.succeed(`Org ID: ${chalk.cyan(orgId)}`);
+    } catch (error: unknown) {
+      const err = error as { message?: string };
+      spinner.fail(`Failed to get org ID: ${err.message}`);
+      console.log(chalk.yellow('Run `pnpm run link:opa` later to link secrets.'));
+      return;
+    }
+  }
+
+  // Check existing connections
+  spinner = ora('Checking existing connections...').start();
+  let existingConnections;
+  try {
+    existingConnections = await agentClient.listConnections(agentId);
+    spinner.succeed(`Found ${existingConnections.length} existing connection(s)`);
+  } catch (error: unknown) {
+    const err = error as { message?: string };
+    spinner.fail(`Failed to list connections: ${err.message}`);
+    console.log(chalk.yellow('Run `pnpm run link:opa` later to link secrets.'));
+    return;
+  }
+
+  const existingSecretOrns = new Set(
+    existingConnections
+      .filter(c => c.connectionType === 'STS_VAULT_SECRET' && c.resource?.orn)
+      .map(c => c.resource!.orn)
+  );
+
+  // Create connections for each secret
+  const newConnections: Array<{ agentId: string; connectionId: string }> = [];
+  const ornMappings: Array<{ envVar: string; orn: string }> = [];
+
+  for (const [secretName, secretId] of Object.entries(secretIds)) {
+    const secretOrn = constructPamSecretORN(orgId, secretId);
+    const ornEnvVar = `OPA_${secretName}_ORN`;
+    ornMappings.push({ envVar: ornEnvVar, orn: secretOrn });
+
+    spinner = ora(`Linking ${secretName}...`).start();
+
+    if (existingSecretOrns.has(secretOrn)) {
+      spinner.warn(`${secretName} already linked (skipped)`);
+      continue;
+    }
+
+    try {
+      const connection = await agentClient.createVaultSecretConnection(agentId, secretOrn);
+      newConnections.push({ agentId, connectionId: connection.id });
+      spinner.succeed(`${secretName} linked: ${chalk.cyan(connection.id)}`);
+    } catch (error: unknown) {
+      const err = error as { message?: string };
+      spinner.fail(`Failed to link ${secretName}: ${err.message}`);
+    }
+  }
+
+  // Update rollback state with new connections
+  if (newConnections.length > 0) {
+    try {
+      updateRollbackState(rollbackState, { agentConnections: newConnections });
+    } catch {
+      // Non-critical
+    }
+  }
+
+  // Update .env.opa with ORNs
+  const envPath = path.join(process.cwd(), 'packages/agent0/.env.opa');
+  if (fs.existsSync(envPath)) {
+    spinner = ora('Updating .env.opa with ORNs...').start();
+    try {
+      let content = fs.readFileSync(envPath, 'utf-8');
+      for (const { envVar, orn } of ornMappings) {
+        const uncommentedRegex = new RegExp(`^${envVar}=.*$`, 'm');
+        if (uncommentedRegex.test(content)) {
+          content = content.replace(uncommentedRegex, `${envVar}=${orn}`);
+        } else {
+          content = content.trimEnd() + `\n${envVar}=${orn}\n`;
+        }
+      }
+      fs.writeFileSync(envPath, content, { mode: 0o600 });
+      spinner.succeed('.env.opa updated with secret ORNs');
+    } catch (error: unknown) {
+      const err = error as { message?: string };
+      spinner.fail(`Failed to update .env.opa: ${err.message}`);
+    }
+  }
+
+  console.log(chalk.green('\n✅ Secrets linked to agent!'));
 }
 
 // ============================================================================

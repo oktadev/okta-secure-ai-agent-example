@@ -189,6 +189,12 @@ async function runSetup(config) {
                     spinner.warn(`Secret already exists: ${chalk.cyan(secretConfig.name)}`);
                     const existing = await runtimeClient.getSecretByName(resourceGroup.id, project.id, secretConfig.name, folder.id);
                     if (existing) {
+                        // Debug: show the secret structure we got
+                        const existingAny = existing;
+                        console.log(chalk.gray(`\n  Debug: Found secret with id=${existing.id}`));
+                        if (existingAny.secret_id) {
+                            console.log(chalk.gray(`  Debug: Also has secret_id=${existingAny.secret_id}`));
+                        }
                         const updateChoice = await prompts({
                             type: 'confirm',
                             name: 'update',
@@ -197,9 +203,38 @@ async function runSetup(config) {
                         });
                         if (updateChoice.update) {
                             spinner = ora(`Updating secret: ${secretConfig.name}...`).start();
-                            await runtimeClient.updateSecretWithEncryption(resourceGroup.id, project.id, existing.id, secretConfig.value, secretConfig.description);
-                            secretIds[secretConfig.name] = existing.id;
-                            spinner.succeed(`Secret updated: ${chalk.cyan(secretConfig.name)}`);
+                            // Use secret_id if available, otherwise fall back to id
+                            const secretIdToUse = existingAny.secret_id || existing.id;
+                            try {
+                                await runtimeClient.updateSecretWithEncryption(resourceGroup.id, project.id, secretIdToUse, secretConfig.name, // name (required for PUT)
+                                secretConfig.value, folder.id, // parent_folder_id (required for PUT)
+                                secretConfig.description, 'secret' // keyName
+                                );
+                                secretIds[secretConfig.name] = existing.id;
+                                spinner.succeed(`Secret updated: ${chalk.cyan(secretConfig.name)}`);
+                            }
+                            catch (updateError) {
+                                spinner.fail(`Failed to update secret: ${secretConfig.name}`);
+                                const ue = updateError;
+                                console.log(chalk.yellow(`\n  Update failed: ${ue.message}`));
+                                console.log(chalk.yellow('  The secret exists but cannot be updated via API.'));
+                                console.log(chalk.yellow('  Options:'));
+                                console.log(chalk.yellow('    1. Delete the secret manually in the OPA dashboard and re-run setup'));
+                                console.log(chalk.yellow('    2. Keep the existing secret value'));
+                                const keepExisting = await prompts({
+                                    type: 'confirm',
+                                    name: 'keep',
+                                    message: 'Keep existing secret and continue?',
+                                    initial: true,
+                                });
+                                if (keepExisting.keep) {
+                                    secretIds[secretConfig.name] = existing.id;
+                                    console.log(chalk.green(`  Keeping existing secret: ${secretConfig.name}`));
+                                }
+                                else {
+                                    throw updateError;
+                                }
+                            }
                         }
                         else {
                             secretIds[secretConfig.name] = existing.id;
@@ -415,6 +450,64 @@ OPA_ANTHROPIC_SECRET_NAME=ANTHROPIC_API_KEY
                 console.log(`OPA_FOLDER_ID=${result.folderId}`);
                 console.log(`OPA_KEY_ID=${result.runtimeCredentials.keyId}`);
                 console.log(`OPA_KEY_SECRET=${result.runtimeCredentials.keySecret}`);
+            }
+        }
+        else {
+            // No new key secret - user chose to keep existing keys
+            console.log(chalk.yellow('\n=== EXISTING CREDENTIALS ===\n'));
+            console.log(chalk.yellow('You chose to keep existing API keys.'));
+            console.log(chalk.yellow('The key secret cannot be retrieved - only shown when first created.\n'));
+            const updateEnvOption = await prompts({
+                type: 'confirm',
+                name: 'update',
+                message: 'Update packages/agent0/.env.opa with resource IDs (without key secret)?',
+                initial: false,
+            });
+            if (updateEnvOption.update) {
+                // Check if existing .env.opa has the key secret
+                const envPath = path.join(process.cwd(), 'packages/agent0/.env.opa');
+                let existingKeySecret = '';
+                if (fs.existsSync(envPath)) {
+                    const existingContent = fs.readFileSync(envPath, 'utf-8');
+                    const match = existingContent.match(/OPA_KEY_SECRET=(.+)/);
+                    if (match) {
+                        existingKeySecret = match[1];
+                        console.log(chalk.green('Found existing OPA_KEY_SECRET in .env.opa, preserving it.'));
+                    }
+                }
+                if (!existingKeySecret) {
+                    console.log(chalk.red('Warning: No existing OPA_KEY_SECRET found. You will need to add it manually.'));
+                    console.log(chalk.yellow('Tip: Re-run setup and choose "Rotate" to create a new API key.\n'));
+                }
+                const envContent = `# OPA Runtime Credentials
+# Generated: ${new Date().toISOString()}
+# WARNING: Keep this file secure!
+
+OPA_BASE_URL=${opaConfig.baseUrl}
+OPA_TEAM_NAME=${opaConfig.teamName}
+OPA_RESOURCE_GROUP_ID=${result.resourceGroupId}
+OPA_PROJECT_ID=${result.projectId}
+OPA_FOLDER_ID=${result.folderId}
+OPA_RUNTIME_USER=${result.runtimeCredentials.userName}
+OPA_KEY_ID=${result.runtimeCredentials.keyId}
+OPA_KEY_SECRET=${existingKeySecret || 'YOUR_KEY_SECRET_HERE'}
+
+# Secret IDs
+${Object.entries(result.secretIds).map(([name, id]) => `OPA_SECRET_${name}=${id}`).join('\n')}
+
+# LLM Provider Configuration
+OPA_LLM_PROVIDER=anthropic
+OPA_ANTHROPIC_SECRET_NAME=ANTHROPIC_API_KEY
+`;
+                fs.writeFileSync(envPath, envContent, { mode: 0o600 });
+                console.log(chalk.green(`\nCredentials saved to: ${envPath}`));
+            }
+            else {
+                console.log(chalk.gray('\nResource IDs (for manual configuration):'));
+                console.log(`  OPA_RESOURCE_GROUP_ID=${result.resourceGroupId}`);
+                console.log(`  OPA_PROJECT_ID=${result.projectId}`);
+                console.log(`  OPA_FOLDER_ID=${result.folderId}`);
+                console.log(`  OPA_KEY_ID=${result.runtimeCredentials.keyId}`);
             }
         }
     }

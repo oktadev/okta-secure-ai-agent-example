@@ -9,6 +9,33 @@ function generateSessionSecret(): string {
   return crypto.randomBytes(32).toString('hex');
 }
 
+// LLM Configuration Types
+export interface AnthropicLLMConfig {
+  provider: 'anthropic';
+  apiKey: string;
+  model: string;
+}
+
+export interface BedrockLLMConfig {
+  provider: 'bedrock';
+  region: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+  sessionToken?: string;
+  modelId: string;
+}
+
+export interface OpaLLMConfig {
+  provider: 'opa';
+  llmProvider: 'anthropic' | 'bedrock';
+}
+
+export interface SkipLLMConfig {
+  provider: 'skip';
+}
+
+export type LLMConfig = AnthropicLLMConfig | BedrockLLMConfig | OpaLLMConfig | SkipLLMConfig;
+
 export interface BootstrapConfig {
   oktaDomain: string;
 
@@ -28,6 +55,9 @@ export interface BootstrapConfig {
   mcpAuthServerId: string;
   mcpAudience: string;
   mcpScopes: string[];
+
+  // LLM Configuration (optional)
+  llmConfig?: LLMConfig;
 }
 
 /**
@@ -52,29 +82,80 @@ OKTA_REDIRECT_URI=http://localhost:3000/callback
 }
 
 /**
+ * Generate LLM configuration section based on mode
+ */
+function generateLLMConfigSection(llmConfig?: LLMConfig): string {
+  if (!llmConfig || llmConfig.provider === 'skip') {
+    // Skip mode: provide template for manual configuration
+    return `# ============================================================================
+# AGENT - LLM INTEGRATION CONFIGURATION
+# ============================================================================
+# Configure EITHER Anthropic OR AWS Bedrock (uncomment one section)
+
+# Option 1: Anthropic
+# ANTHROPIC_API_KEY=sk-ant-your-key-here
+# ANTHROPIC_MODEL=claude-sonnet-4-20250514
+
+# Option 2: AWS Bedrock
+# AWS_REGION=us-east-1
+# AWS_ACCESS_KEY_ID=your_aws_access_key
+# AWS_SECRET_ACCESS_KEY=your_aws_secret_key
+# BEDROCK_MODEL_ID=anthropic.claude-3-sonnet-20240229-v1:0
+
+# Note: If using OPA mode, credentials are fetched from .env.opa
+`;
+  }
+
+  if (llmConfig.provider === 'opa') {
+    // OPA mode: no credentials here, they come from .env.opa
+    return `# ============================================================================
+# AGENT - LLM INTEGRATION CONFIGURATION
+# ============================================================================
+# LLM credentials are managed via Okta Privileged Access (OPA)
+# See .env.opa for OPA configuration
+# Credentials are fetched per-user session via token exchange
+`;
+  }
+
+  if (llmConfig.provider === 'anthropic') {
+    return `# ============================================================================
+# AGENT - LLM INTEGRATION CONFIGURATION
+# ============================================================================
+ANTHROPIC_API_KEY=${llmConfig.apiKey}
+ANTHROPIC_MODEL=${llmConfig.model}
+`;
+  }
+
+  if (llmConfig.provider === 'bedrock') {
+    let bedrockConfig = `# ============================================================================
+# AGENT - LLM INTEGRATION CONFIGURATION
+# ============================================================================
+AWS_REGION=${llmConfig.region}
+AWS_ACCESS_KEY_ID=${llmConfig.accessKeyId}
+AWS_SECRET_ACCESS_KEY=${llmConfig.secretAccessKey}
+BEDROCK_MODEL_ID=${llmConfig.modelId}
+`;
+    if (llmConfig.sessionToken) {
+      bedrockConfig += `AWS_SESSION_TOKEN=${llmConfig.sessionToken}\n`;
+    }
+    return bedrockConfig;
+  }
+
+  return '';
+}
+
+/**
  * Generate .env.agent file for agent0 package (AI Agent / MCP Client)
  */
 export function generateAgent0AgentEnv(config: BootstrapConfig): string {
+  const llmSection = generateLLMConfigSection(config.llmConfig);
+
   return `# ============================================================================
 # AGENT - MCP CLIENT CONFIGURATION
 # ============================================================================
 MCP_SERVER_URL=http://localhost:5002/mcp
 
-# ============================================================================
-# AGENT - LLM INTEGRATION CONFIGURATION
-# ============================================================================
-# Configure EITHER Anthropic Direct OR AWS Bedrock
-
-# Anthropic Direct
-ANTHROPIC_API_KEY=your_anthropic_api_key_here
-ANTHROPIC_MODEL=claude-3-5-sonnet-20241022
-
-# AWS Bedrock (alternative)
-# AWS_REGION=us-east-1
-# AWS_ACCESS_KEY_ID=your_aws_access_key
-# AWS_SECRET_ACCESS_KEY=your_aws_secret_key
-# BEDROCK_MODEL_ID=us.anthropic.claude-3-5-sonnet-20241022-v2:0
-
+${llmSection}
 # ============================================================================
 # AGENT - CROSS-APP ACCESS (ID-JAG TOKEN EXCHANGE)
 # ============================================================================
@@ -90,6 +171,49 @@ MCP_AUTHORIZATION_SERVER=https://${config.oktaDomain}/oauth2/${config.mcpAuthSer
 MCP_AUTHORIZATION_SERVER_TOKEN_ENDPOINT=https://${config.oktaDomain}/oauth2/${config.mcpAuthServerId}/v1/token
 
 `;
+}
+
+/**
+ * Generate .env.opa stub file for OPA mode
+ */
+export function generateOpaEnvStub(llmProvider: 'anthropic' | 'bedrock'): string {
+  if (llmProvider === 'anthropic') {
+    return `# ============================================================================
+# OPA (OKTA PRIVILEGED ACCESS) CONFIGURATION
+# ============================================================================
+# Generated by bootstrap:okta - Complete setup with: pnpm run link:opa
+
+# LLM Provider
+OPA_LLM_PROVIDER=anthropic
+
+# Secret ORNs (filled by link:opa after setup:opa)
+# OPA_ANTHROPIC_API_KEY_ORN=orn:okta:pam:{orgId}:secrets:{secretId}
+# OPA_ANTHROPIC_MODEL_ORN=orn:okta:pam:{orgId}:secrets:{secretId}
+
+# Optional: Default model if not stored in OPA
+ANTHROPIC_MODEL=claude-sonnet-4-20250514
+
+`;
+  } else {
+    return `# ============================================================================
+# OPA (OKTA PRIVILEGED ACCESS) CONFIGURATION
+# ============================================================================
+# Generated by bootstrap:okta - Complete setup with: pnpm run link:opa
+
+# LLM Provider
+OPA_LLM_PROVIDER=bedrock
+
+# Secret ORNs (filled by link:opa after setup:opa)
+# OPA_AWS_ACCESS_KEY_ORN=orn:okta:pam:{orgId}:secrets:{secretId}
+# OPA_AWS_SECRET_ACCESS_KEY_ORN=orn:okta:pam:{orgId}:secrets:{secretId}
+# OPA_AWS_SESSION_TOKEN_ORN=orn:okta:pam:{orgId}:secrets:{secretId}
+
+# Non-secret configuration (not stored in OPA)
+AWS_REGION=us-east-1
+BEDROCK_MODEL_ID=anthropic.claude-3-sonnet-20240229-v1:0
+
+`;
+  }
 }
 
 /**
