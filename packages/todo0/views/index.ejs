@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta name="csrf-token" content="<%= csrfToken %>">
   <title>Todo0</title>
   <style>
     body {
@@ -122,6 +123,7 @@
     <% } else { %>
       <h1>Todo0</h1>
       <form action="/todos" method="POST">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>" />
         <input type="text" name="title" placeholder="New todo" required />
         <button type="submit">Add</button>
       </form>
@@ -130,15 +132,18 @@
           <li class="<%= todo.completed ? 'done' : '' %>">
             <span style="flex:1"><%= todo.title %></span>
             <form action="/todos/<%= todo.id %>/complete" method="POST" style="display:inline">
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>" />
               <button type="submit"><%= todo.completed ? 'Undo' : 'Complete' %></button>
             </form>
             <form action="/todos/<%= todo.id %>/delete" method="POST" style="display:inline">
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>" />
               <button type="submit">Delete</button>
             </form>
           </li>
         <% }) %>
       </ul>
       <form action="/logout" method="POST">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>" />
         <button type="submit" class="logout-btn">Logout</button>
       </form>
     <% } %>
