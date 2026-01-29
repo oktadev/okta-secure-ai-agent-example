@@ -126,13 +126,14 @@ const app = express();
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, '../views'));
 
-// Security headers via helmet (uses secure defaults, we only override CSP for inline scripts/styles)
+// Security headers via helmet (uses secure defaults, we only override CSP)
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
       scriptSrc: ["'self'", "'unsafe-inline'"],
       styleSrc: ["'self'", "'unsafe-inline'"],
+      formAction: null, // Disable form-action restriction (needed for OAuth redirects)
     },
   },
 }));
