@@ -17,10 +17,9 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.19.1",
+    "@modelcontextprotocol/sdk": "1.19.1",
     "@okta/jwt-verifier": "^4.0.2",
     "@prisma/client": "^6.16.3",
-    "body-parser": "^2.2.0",
     "dotenv": "^17.2.3",
     "ejs": "^3.1.10",
     "express": "^5.1.0",
