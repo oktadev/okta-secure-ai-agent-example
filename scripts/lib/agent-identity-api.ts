@@ -349,6 +349,25 @@ export class AgentIdentityAPIClient {
   }
 
   /**
+   * Deactivate a connection between agent and authorization server
+   */
+  async deactivateConnection(agentId: string, connectionId: string): Promise<void> {
+    try {
+      const response = await axios.post(
+        `${this.baseUrl}/workload-principals/api/v1/ai-agents/${agentId}/connections/${connectionId}/lifecycle/deactivate`,
+        {},
+        this.getAxiosConfig()
+      );
+
+      if (response.status !== 200) {
+        throw new Error(`Unexpected status: ${response.status}`);
+      }
+    } catch (error: any) {
+      this.handleAxiosError(error, 'Deactivate connection');
+    }
+  }
+
+  /**
    * Delete a connection between agent and authorization server
    */
   async deleteConnection(agentId: string, connectionId: string): Promise<void> {
@@ -358,8 +377,7 @@ export class AgentIdentityAPIClient {
         this.getAxiosConfig()
       );
 
-      // spec wrong, says 204 but actually returns 200
-      if (response.status !== 200) {
+      if (response.status !== 204) {
         throw new Error(`Unexpected status: ${response.status}`);
       }
     } catch (error: any) {
