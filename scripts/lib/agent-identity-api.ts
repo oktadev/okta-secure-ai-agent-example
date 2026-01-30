@@ -496,7 +496,7 @@ export class AgentIdentityAPIClient {
 
   /**
    * Remove agent owners using the standard governance API
-   * Sets principalOrns to null to remove all owners
+   * Sets principalOrns to empty array to remove all owners
    */
   async removeAgentOwnersStandard(agentId: string, orgId: string): Promise<void> {
     try {
@@ -505,7 +505,7 @@ export class AgentIdentityAPIClient {
       const response = await axios.post(
         `${this.baseUrl}/governance/api/v1/resource-owners`,
         {
-          principalOrns: null,
+          principalOrns: [],
           resourceOrns: [resourceOrn],
         },
         this.getAxiosConfig()
@@ -516,7 +516,7 @@ export class AgentIdentityAPIClient {
       }
     } catch (error: any) {
       const requestBody = {
-        principalOrns: null,
+        principalOrns: [],
         resourceOrns: [`orn:okta:directory:${orgId}:workload-principals:ai-agents:${agentId}`],
       };
       this.handleAxiosError(error, 'Remove agent owners (standard)', requestBody);
