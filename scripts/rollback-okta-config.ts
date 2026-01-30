@@ -208,7 +208,21 @@ async function rollback() {
       }
     }
 
-    // Step 3: Delete Agent Connections (must be before agents)
+    // Step 3: Deactivate Agent Connections (must be deactivated before deletion)
+    if (state.agentConnections && state.agentConnections.length > 0) {
+      for (const connection of state.agentConnections) {
+        const spinner = ora(`Deactivate agent connection ${connection.connectionId}...`).start();
+        try {
+          await agentClient.deactivateConnection(connection.agentId, connection.connectionId);
+          spinner.succeed(`Agent connection deactivated`);
+        } catch (error: any) {
+          spinner.fail(`Failed: ${error.message}`);
+          errorCount++;
+        }
+      }
+    }
+
+    // Step 3.5: Delete Agent Connections (must be before agents)
     if (state.agentConnections && state.agentConnections.length > 0) {
       for (const connection of state.agentConnections) {
         const spinner = ora(`Deleting agent connection ${connection.connectionId}...`).start();
