@@ -1,70 +1,17 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
-
 /**
  * Generate a cryptographically secure random session secret
  */
-function generateSessionSecret(): string {
-  return crypto.randomBytes(32).toString('hex');
+function generateSessionSecret() {
+    return crypto.randomBytes(32).toString('hex');
 }
-
-// LLM Configuration Types
-export interface AnthropicLLMConfig {
-  provider: 'anthropic';
-  apiKey: string;
-  model: string;
-}
-
-export interface BedrockLLMConfig {
-  provider: 'bedrock';
-  region: string;
-  accessKeyId: string;
-  secretAccessKey: string;
-  sessionToken?: string;
-  modelId: string;
-}
-
-export interface OpaLLMConfig {
-  provider: 'opa';
-  llmProvider: 'anthropic' | 'bedrock';
-}
-
-export interface SkipLLMConfig {
-  provider: 'skip';
-}
-
-export type LLMConfig = AnthropicLLMConfig | BedrockLLMConfig | OpaLLMConfig | SkipLLMConfig;
-
-export interface BootstrapConfig {
-  oktaDomain: string;
-
-  // Applications
-  agentAppClientId: string;
-  agentAppClientSecret: string;
-  agentIdentityClientId: string;
-
-  todo0AppClientId: string;
-  todo0AppClientSecret: string;
-
-  // Keys
-  privateKeyFile: string;
-  keyId: string;
-
-  // Authorization Servers
-  mcpAuthServerId: string;
-  mcpAudience: string;
-  mcpScopes: string[];
-
-  // LLM Configuration (optional)
-  llmConfig?: LLMConfig;
-}
-
 /**
  * Generate .env.app file for agent0 package (Resource Server)
  */
-export function generateAgent0AppEnv(config: BootstrapConfig): string {
-  return `# ============================================================================
+export function generateAgent0AppEnv(config) {
+    return `# ============================================================================
 # RESOURCE SERVER CONFIGURATION
 # ============================================================================
 PORT=3000
@@ -80,14 +27,13 @@ OKTA_REDIRECT_URI=http://localhost:3000/callback
 
 `;
 }
-
 /**
  * Generate LLM configuration section based on mode
  */
-function generateLLMConfigSection(llmConfig?: LLMConfig): string {
-  if (!llmConfig || llmConfig.provider === 'skip') {
-    // Skip mode: provide template for manual configuration
-    return `# ============================================================================
+function generateLLMConfigSection(llmConfig) {
+    if (!llmConfig || llmConfig.provider === 'skip') {
+        // Skip mode: provide template for manual configuration
+        return `# ============================================================================
 # AGENT - LLM INTEGRATION CONFIGURATION
 # ============================================================================
 # Configure EITHER Anthropic OR AWS Bedrock (uncomment one section)
@@ -104,30 +50,27 @@ function generateLLMConfigSection(llmConfig?: LLMConfig): string {
 
 # Note: If using OPA mode, credentials are fetched from .env.opa
 `;
-  }
-
-  if (llmConfig.provider === 'opa') {
-    // OPA mode: no credentials here, they come from .env.opa
-    return `# ============================================================================
+    }
+    if (llmConfig.provider === 'opa') {
+        // OPA mode: no credentials here, they come from .env.opa
+        return `# ============================================================================
 # AGENT - LLM INTEGRATION CONFIGURATION
 # ============================================================================
 # LLM credentials are managed via Okta Privileged Access (OPA)
 # See .env.opa for OPA configuration
 # Credentials are fetched per-user session via token exchange
 `;
-  }
-
-  if (llmConfig.provider === 'anthropic') {
-    return `# ============================================================================
+    }
+    if (llmConfig.provider === 'anthropic') {
+        return `# ============================================================================
 # AGENT - LLM INTEGRATION CONFIGURATION
 # ============================================================================
 ANTHROPIC_API_KEY=${llmConfig.apiKey}
 ANTHROPIC_MODEL=${llmConfig.model}
 `;
-  }
-
-  if (llmConfig.provider === 'bedrock') {
-    let bedrockConfig = `# ============================================================================
+    }
+    if (llmConfig.provider === 'bedrock') {
+        let bedrockConfig = `# ============================================================================
 # AGENT - LLM INTEGRATION CONFIGURATION
 # ============================================================================
 AWS_REGION=${llmConfig.region}
@@ -135,22 +78,19 @@ AWS_ACCESS_KEY_ID=${llmConfig.accessKeyId}
 AWS_SECRET_ACCESS_KEY=${llmConfig.secretAccessKey}
 BEDROCK_MODEL_ID=${llmConfig.modelId}
 `;
-    if (llmConfig.sessionToken) {
-      bedrockConfig += `AWS_SESSION_TOKEN=${llmConfig.sessionToken}\n`;
+        if (llmConfig.sessionToken) {
+            bedrockConfig += `AWS_SESSION_TOKEN=${llmConfig.sessionToken}\n`;
+        }
+        return bedrockConfig;
     }
-    return bedrockConfig;
-  }
-
-  return '';
+    return '';
 }
-
 /**
  * Generate .env.agent file for agent0 package (AI Agent / MCP Client)
  */
-export function generateAgent0AgentEnv(config: BootstrapConfig): string {
-  const llmSection = generateLLMConfigSection(config.llmConfig);
-
-  return `# ============================================================================
+export function generateAgent0AgentEnv(config) {
+    const llmSection = generateLLMConfigSection(config.llmConfig);
+    return `# ============================================================================
 # AGENT - MCP CLIENT CONFIGURATION
 # ============================================================================
 MCP_SERVER_URL=http://localhost:5002/mcp
@@ -172,13 +112,12 @@ MCP_AUTHORIZATION_SERVER_TOKEN_ENDPOINT=https://${config.oktaDomain}/oauth2/${co
 
 `;
 }
-
 /**
  * Generate .env.opa stub file for OPA mode
  */
-export function generateOpaEnvStub(llmProvider: 'anthropic' | 'bedrock'): string {
-  if (llmProvider === 'anthropic') {
-    return `# ============================================================================
+export function generateOpaEnvStub(llmProvider) {
+    if (llmProvider === 'anthropic') {
+        return `# ============================================================================
 # OPA (OKTA PRIVILEGED ACCESS) CONFIGURATION
 # ============================================================================
 # Generated by bootstrap:okta - Complete setup with: pnpm run link:opa
@@ -194,8 +133,9 @@ OPA_LLM_PROVIDER=anthropic
 ANTHROPIC_MODEL=claude-sonnet-4-20250514
 
 `;
-  } else {
-    return `# ============================================================================
+    }
+    else {
+        return `# ============================================================================
 # OPA (OKTA PRIVILEGED ACCESS) CONFIGURATION
 # ============================================================================
 # Generated by bootstrap:okta - Complete setup with: pnpm run link:opa
@@ -213,14 +153,13 @@ AWS_REGION=us-east-1
 BEDROCK_MODEL_ID=anthropic.claude-3-sonnet-20240229-v1:0
 
 `;
-  }
+    }
 }
-
 /**
  * Generate .env.app file for todo0 package (App server)
  */
-export function generateTodo0AppEnv(config: BootstrapConfig): string {
-  return `# ============================================================================
+export function generateTodo0AppEnv(config) {
+    return `# ============================================================================
 # APP SERVER CONFIGURATION
 # ============================================================================
 PORT=5001
@@ -229,11 +168,10 @@ SESSION_SECRET=${generateSessionSecret()}
 # ============================================================================
 # APP SERVER - OKTA OAUTH (HUMAN SSO)
 # ============================================================================
-OKTA_ISSUER=https://${config.oktaDomain}/
+OKTA_ISSUER=https://${config.oktaDomain}/oauth2/default
 OKTA_CLIENT_ID=${config.todo0AppClientId}
 OKTA_CLIENT_SECRET=${config.todo0AppClientSecret}
 OKTA_REDIRECT_URI=http://localhost:5001/callback
-EXPECTED_AUDIENCE=api://todo0
 
 # ============================================================================
 # DATABASE CONFIGURATION
@@ -242,12 +180,11 @@ EXPECTED_AUDIENCE=api://todo0
 # Default: SQLite with file ./dev.db
 `;
 }
-
 /**
  * Generate .env.mcp file for todo0 package (MCP server)
  */
-export function generateTodo0McpEnv(config: BootstrapConfig): string {
-  return `# ============================================================================
+export function generateTodo0McpEnv(config) {
+    return `# ============================================================================
 # MCP SERVER CONFIGURATION
 # ============================================================================
 MCP_PORT=5002
@@ -265,36 +202,31 @@ MCP_EXPECTED_AUDIENCE=${config.mcpAudience}
 # Default: SQLite with file ./dev.db
 `;
 }
-
 /**
  * Write .env file to disk
  */
-export function writeEnvFile(filePath: string, content: string): void {
-  const absolutePath = path.resolve(filePath);
-  const dir = path.dirname(absolutePath);
-
-  // Ensure directory exists
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-
-  // Check if .env already exists
-  if (fs.existsSync(absolutePath)) {
-    const backup = `${absolutePath}.backup`;
-    fs.copyFileSync(absolutePath, backup);
-    console.log(`  Backed up existing .env to: ${backup}`);
-  }
-
-  // Write new .env file
-  fs.writeFileSync(absolutePath, content, { mode: 0o600 });
-  console.log(`✓ Created .env file: ${absolutePath}`);
+export function writeEnvFile(filePath, content) {
+    const absolutePath = path.resolve(filePath);
+    const dir = path.dirname(absolutePath);
+    // Ensure directory exists
+    if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+    }
+    // Check if .env already exists
+    if (fs.existsSync(absolutePath)) {
+        const backup = `${absolutePath}.backup`;
+        fs.copyFileSync(absolutePath, backup);
+        console.log(`  Backed up existing .env to: ${backup}`);
+    }
+    // Write new .env file
+    fs.writeFileSync(absolutePath, content, { mode: 0o600 });
+    console.log(`✓ Created .env file: ${absolutePath}`);
 }
-
 /**
  * Generate configuration report markdown
  */
-export function generateConfigReport(config: BootstrapConfig): string {
-  return `# Okta Tenant Bootstrap Report
+export function generateConfigReport(config) {
+    return `# Okta Tenant Bootstrap Report
 
 Generated: ${new Date().toISOString()}
 
@@ -403,13 +335,12 @@ Agent Identity → MCP AS (/oauth2/${config.mcpAuthServerId}/v1/token)
 - See MCP specification for token passthrough best practices
 `;
 }
-
 /**
  * Write configuration report to file
  */
-export function writeConfigReport(config: BootstrapConfig, filePath: string = 'okta-config-report.md'): void {
-  const absolutePath = path.resolve(filePath);
-  const content = generateConfigReport(config);
-  fs.writeFileSync(absolutePath, content);
-  console.log(`✓ Configuration report saved: ${absolutePath}`);
+export function writeConfigReport(config, filePath = 'okta-config-report.md') {
+    const absolutePath = path.resolve(filePath);
+    const content = generateConfigReport(config);
+    fs.writeFileSync(absolutePath, content);
+    console.log(`✓ Configuration report saved: ${absolutePath}`);
 }

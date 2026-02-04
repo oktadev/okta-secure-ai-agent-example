@@ -13,6 +13,7 @@ export interface AgentConnectionInfo {
  */
 export interface RollbackState {
   oktaDomain: string;
+  orgId?: string;
   mcpAuthServerIds: string[];
   agent0AppIds: string[];
   todo0AppIds: string[];
@@ -63,6 +64,7 @@ export function loadRollbackState(oktaDomain: string): RollbackState {
     // Ensure all array fields exist (for backward compatibility)
     return {
       oktaDomain: state.oktaDomain || oktaDomain,
+      orgId: state.orgId,
       mcpAuthServerIds: state.mcpAuthServerIds || [],
       agent0AppIds: state.agent0AppIds || [],
       todo0AppIds: state.todo0AppIds || [],
@@ -92,6 +94,7 @@ export function updateRollbackState(
   // Merge arrays (append new items, avoid duplicates)
   const mergedState: RollbackState = {
     oktaDomain: updates.oktaDomain || currentState.oktaDomain,
+    orgId: updates.orgId || currentState.orgId,
     mcpAuthServerIds: mergeArrays(currentState.mcpAuthServerIds, updates.mcpAuthServerIds),
     agent0AppIds: mergeArrays(currentState.agent0AppIds, updates.agent0AppIds),
     todo0AppIds: mergeArrays(currentState.todo0AppIds, updates.todo0AppIds),

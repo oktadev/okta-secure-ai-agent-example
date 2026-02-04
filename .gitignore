@@ -10,6 +10,7 @@ build/
 .env.mcp
 .env.opa
 .env.*.backup
+.env.opa
 .DS_Store
 *.log
 coverage/
@@ -23,6 +24,7 @@ packages/*/build/
 
 # Okta bootstrap state
 .okta-bootstrap-state.json
+.opa-setup-state.json
 okta-config-report.md
 security-fixes.md
 CLAUDE.md
