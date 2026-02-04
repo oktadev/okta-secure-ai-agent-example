@@ -628,6 +628,78 @@ export class OPAClient {
     );
     return response.data;
   }
+
+  async listSecurityPolicies(): Promise<SecurityPolicy[]> {
+    const response = await this.client.get(
+      `/v1/teams/${this.config.teamName}/security_policy`
+    );
+    return response.data.list || [];
+  }
+
+  async getSecurityPolicyByName(name: string): Promise<SecurityPolicy | null> {
+    const policies = await this.listSecurityPolicies();
+    return policies.find(p => p.name === name) || null;
+  }
+
+  async deleteSecurityPolicy(policyId: string): Promise<void> {
+    await this.client.delete(
+      `/v1/teams/${this.config.teamName}/security_policy/${policyId}`
+    );
+  }
+
+  // ==========================================================================
+  // Delete Operations
+  // ==========================================================================
+
+  async deleteSecret(
+    resourceGroupId: string,
+    projectId: string,
+    secretId: string
+  ): Promise<void> {
+    await this.client.delete(
+      `/v1/teams/${this.config.teamName}/resource_groups/${resourceGroupId}/projects/${projectId}/secrets/${secretId}`
+    );
+  }
+
+  async deleteSecretFolder(
+    resourceGroupId: string,
+    projectId: string,
+    folderId: string
+  ): Promise<void> {
+    await this.client.delete(
+      `/v1/teams/${this.config.teamName}/resource_groups/${resourceGroupId}/projects/${projectId}/secret_folders/${folderId}`
+    );
+  }
+
+  async deleteProject(resourceGroupId: string, projectId: string): Promise<void> {
+    await this.client.delete(
+      `/v1/teams/${this.config.teamName}/resource_groups/${resourceGroupId}/projects/${projectId}`
+    );
+  }
+
+  async deleteResourceGroup(resourceGroupId: string): Promise<void> {
+    await this.client.delete(
+      `/v1/teams/${this.config.teamName}/resource_groups/${resourceGroupId}`
+    );
+  }
+
+  async deleteGroup(groupName: string): Promise<void> {
+    await this.client.delete(
+      `/v1/teams/${this.config.teamName}/groups/${groupName}`
+    );
+  }
+
+  async removeUserFromGroup(groupName: string, userName: string): Promise<void> {
+    await this.client.delete(
+      `/v1/teams/${this.config.teamName}/groups/${groupName}/users/${userName}`
+    );
+  }
+
+  async deleteServiceUser(userName: string): Promise<void> {
+    await this.client.delete(
+      `/v1/teams/${this.config.teamName}/service_users/${userName}`
+    );
+  }
 }
 
 // ============================================================================

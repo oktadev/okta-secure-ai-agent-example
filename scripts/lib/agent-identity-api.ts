@@ -62,7 +62,8 @@ export interface CreateConnectionRequest {
 
 export interface CreateVaultSecretConnectionRequest {
   connectionType: 'STS_VAULT_SECRET';
-  resource: {
+  resourceIndicator: string;
+  secret: {
     orn: string;
   };
 }
@@ -367,7 +368,8 @@ export class AgentIdentityAPIClient {
   ): Promise<AgentConnection> {
     const request: CreateVaultSecretConnectionRequest = {
       connectionType: 'STS_VAULT_SECRET',
-      resource: {
+      resourceIndicator: secretOrn,
+      secret: {
         orn: secretOrn,
       },
     };
@@ -395,9 +397,29 @@ export class AgentIdentityAPIClient {
         this.getAxiosConfig()
       );
 
-      return response.data as AgentConnection[];
+      // API returns { data: [...], _links: {...} }
+      return (response.data?.data || []) as AgentConnection[];
     } catch (error: any) {
       this.handleAxiosError(error, 'List connections');
+    }
+  }
+
+  /**
+   * Deactivate a connection between agent and authorization server
+   */
+  async deactivateConnection(agentId: string, connectionId: string): Promise<void> {
+    try {
+      const response = await axios.post(
+        `${this.baseUrl}/workload-principals/api/v1/ai-agents/${agentId}/connections/${connectionId}/lifecycle/deactivate`,
+        {},
+        this.getAxiosConfig()
+      );
+
+      if (response.status !== 200) {
+        throw new Error(`Unexpected status: ${response.status}`);
+      }
+    } catch (error: any) {
+      this.handleAxiosError(error, 'Deactivate connection');
     }
   }
 

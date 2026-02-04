@@ -33,6 +33,7 @@
     "validate:opa": "tsx scripts/validate-opa-secrets.ts",
     "rollback:okta": "tsx scripts/rollback-okta-config.ts",
     "setup:opa": "tsx scripts/setup-opa-secrets.ts",
+    "rollback:pam": "tsx scripts/rollback-opa-config.ts",
     "link:opa": "tsx scripts/link-opa-secrets.ts",
     "typecheck:scripts": "tsc --project scripts/tsconfig.json --noEmit"
   },

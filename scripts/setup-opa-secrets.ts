@@ -25,6 +25,10 @@ import {
   constructPamSecretORN,
 } from './lib/agent-identity-api.js';
 import { loadRollbackState, updateRollbackState } from './lib/state-manager.js';
+import {
+  loadOPARollbackState,
+  updateOPARollbackState,
+} from './lib/opa-state-manager.js';
 
 // ============================================================================
 // Configuration
@@ -64,6 +68,9 @@ async function runSetup(config: SetupConfig): Promise<SetupResult> {
     token: config.adminToken,
   });
 
+  // Load or create OPA state for rollback tracking
+  let opaState = loadOPARollbackState(config.baseUrl, config.teamName);
+
   let spinner = ora();
 
   // Step 1: Create Runtime Service User FIRST
@@ -76,12 +83,16 @@ async function runSetup(config: SetupConfig): Promise<SetupResult> {
     runtimeUser = await client.createServiceUser(config.runtimeUserName);
     spinner.succeed(`Runtime user created: ${chalk.cyan(runtimeUser.name)}`);
   }
+  // Save service user to state
+  opaState = updateOPARollbackState(opaState, { serviceUserName: config.runtimeUserName });
 
   // Step 2: Create group for runtime user
   const groupName = `${config.runtimeUserName}-group`;
   spinner = ora('Creating group for runtime user...').start();
   const group = await client.getOrCreateGroup(groupName, ['end_user']);
   spinner.succeed(`Group: ${chalk.cyan(group.name)} (${group.id})`);
+  // Save group to state
+  opaState = updateOPARollbackState(opaState, { groupName: group.name, groupId: group.id });
 
   // Step 3: Add runtime user to group
   spinner = ora('Adding runtime user to group...').start();
@@ -100,11 +111,21 @@ async function runSetup(config: SetupConfig): Promise<SetupResult> {
     [{ id: group.id }]
   );
   spinner.succeed(`Resource group: ${chalk.cyan(resourceGroup.name)} (${resourceGroup.id})`);
+  // Save resource group to state
+  opaState = updateOPARollbackState(opaState, {
+    resourceGroupId: resourceGroup.id,
+    resourceGroupName: resourceGroup.name,
+  });
 
   // Step 5: Create Project
   spinner = ora('Creating project...').start();
   const project = await client.getOrCreateProject(resourceGroup.id, config.projectName);
   spinner.succeed(`Project: ${chalk.cyan(project.name)} (${project.id})`);
+  // Save project to state
+  opaState = updateOPARollbackState(opaState, {
+    projectId: project.id,
+    projectName: project.name,
+  });
 
   // Step 6: Create Secret Folder
   spinner = ora('Creating secret folder...').start();
@@ -115,6 +136,11 @@ async function runSetup(config: SetupConfig): Promise<SetupResult> {
     'Folder for application secrets'
   );
   spinner.succeed(`Folder: ${chalk.cyan(folder.name)} (${folder.id})`);
+  // Save folder to state
+  opaState = updateOPARollbackState(opaState, {
+    folderId: folder.id,
+    folderName: folder.name,
+  });
 
   // Step 7: Create API key for runtime user
   spinner = ora('Checking for existing API keys...').start();
@@ -170,6 +196,8 @@ async function runSetup(config: SetupConfig): Promise<SetupResult> {
     keySecret = newKey.secret;
     spinner.succeed(`API key created: ${chalk.cyan(keyId)}`);
   }
+  // Save key ID to state
+  opaState = updateOPARollbackState(opaState, { serviceUserKeyIds: [keyId] });
 
   // Step 8: Create security policy
   spinner = ora('Creating security policy...').start();
@@ -206,23 +234,33 @@ async function runSetup(config: SetupConfig): Promise<SetupResult> {
     },
   ];
 
+  let securityPolicyId: string | undefined;
   try {
-    await client.createSecurityPolicy(
+    const policy = await client.createSecurityPolicy(
       policyName,
       { user_groups: [{ id: group.id }] },
       rules,
       true,
       `Security policy for ${config.runtimeUserName} to access secrets`
     );
+    securityPolicyId = policy.id;
     spinner.succeed(`Security policy created: ${chalk.cyan(policyName)}`);
   } catch (error: unknown) {
     const err = error as { response?: { status?: number } };
     if (err.response?.status === 409) {
       spinner.warn('Security policy already exists');
+      // Try to get the policy ID for state tracking
+      const existingPolicy = await client.getSecurityPolicyByName(policyName);
+      securityPolicyId = existingPolicy?.id;
     } else {
       throw error;
     }
   }
+  // Save security policy to state
+  opaState = updateOPARollbackState(opaState, {
+    securityPolicyName: policyName,
+    securityPolicyId,
+  });
 
   // Step 9: Store secrets using runtime user credentials
   const secretIds: Record<string, string> = {};
@@ -330,6 +368,12 @@ async function runSetup(config: SetupConfig): Promise<SetupResult> {
           spinner.fail(`Failed to store secret: ${secretConfig.name}`);
           throw error;
         }
+      }
+      // Save each secret to state as we go
+      if (secretIds[secretConfig.name]) {
+        opaState = updateOPARollbackState(opaState, {
+          secretIds: [{ name: secretConfig.name, id: secretIds[secretConfig.name]! }],
+        });
       }
     }
   }
