@@ -105,7 +105,7 @@ SESSION_SECRET=${generateSessionSecret()}
 # ============================================================================
 # APP SERVER - OKTA OAUTH (HUMAN SSO)
 # ============================================================================
-OKTA_ISSUER=https://${config.oktaDomain}/oauth2/default
+OKTA_ISSUER=https://${config.oktaDomain}/
 OKTA_CLIENT_ID=${config.todo0AppClientId}
 OKTA_CLIENT_SECRET=${config.todo0AppClientSecret}
 OKTA_REDIRECT_URI=http://localhost:5001/callback
