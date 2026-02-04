@@ -478,10 +478,12 @@ async function bootstrap() {
 
     console.log('Next steps:');
     console.log(`  1. ${chalk.cyan('pnpm install')} - Install dependencies`);
-    console.log(`  2. ${chalk.cyan('pnpm run bootstrap')} - Bootstrap database`);
-    console.log(`  3. ${chalk.cyan('pnpm run start:todo0')} - Start REST API`);
-    console.log(`  4. ${chalk.cyan('pnpm run start:mcp')} - Start MCP Server`);
-    console.log(`  5. ${chalk.cyan('pnpm run start:agent0')} - Start Agent`);
+    console.log(`  2. ${chalk.cyan('pnpm run build')} - Build and bootstrap database`);
+    console.log(`  3. ${chalk.cyan('pnpm run dev')} - Start all services together`);
+    console.log(`\n  Or run in separate terminals:`);
+    console.log(`     ${chalk.cyan('pnpm run start:todo0')} - Start REST API`);
+    console.log(`     ${chalk.cyan('pnpm run start:mcp')} - Start MCP Server`);
+    console.log(`     ${chalk.cyan('pnpm run start:agent0')} - Start Agent`);
     console.log(`\n  Optional: ${chalk.cyan('pnpm run validate:okta')} - Validate configuration`);
     console.log(`\n📄 See ${chalk.cyan('okta-config-report.md')} for detailed configuration\n`);
   } catch (error: any) {
