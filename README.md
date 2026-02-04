@@ -132,7 +132,8 @@ Before running the bootstrap script, you'll need:
    - Verify installation: `node --version`
 
 2. **pnpm 8 or later**
-   - Install via npm: `npm install -g pnpm`
+   - Install via Homebrew (macOS): `brew install pnpm`
+   - Or Install via npm: `npm install -g pnpm`
    - Or via standalone script: `curl -fsSL https://get.pnpm.io/install.sh | sh -`
    - Verify installation: `pnpm --version`
 
@@ -152,6 +153,7 @@ Before running the bootstrap script, you'll need:
 Run the interactive bootstrap script to automatically configure your Okta tenant and generate all required configuration files:
 
 ```sh
+pnpm install
 pnpm run bootstrap:okta
 ```
 
@@ -182,7 +184,8 @@ pnpm run bootstrap:okta
 
 - `packages/agent0/.env.app` - Agent0 resource server configuration
 - `packages/agent0/.env.agent` - Agent0 agent identity configuration with MCP settings
-- `packages/todo0/.env` - Todo0 MCP server configuration
+- `packages/todo0/.env.app` - Todo0 app server configuration
+- `packages/todo0/.env.mcp` - Todo0 MCP server configuration
 - `packages/agent0/agent0-private-key.pem` - RSA private key (600 permissions)
 - `okta-config-report.md` - Detailed configuration report
 - `.okta-bootstrap-state.json` - State file for rollback
@@ -224,7 +227,8 @@ If you prefer to manually configure Okta and create your own .env files, refer t
 
 - `packages/agent0/.env.agent.example`
 - `packages/agent0/.env.app.example`
-- `packages/todo0/.env.example`
+- `packages/todo0/.env.app.example`
+- `packages/todo0/.env.mcp.example`
 
 ## Install & build
 
@@ -234,25 +238,19 @@ If you prefer to manually configure Okta and create your own .env files, refer t
 pnpm install
 ```
 
-### 2. Approve builds & build
-
-```sh
-pnpm approve-builds
-```
-
-### 3. Init prisma client
+### 2. Init prisma client
 
 ```sh
 pnpm init:prisma
 ```
 
-### 4. Build
+### 3. Build
 
 ```sh
 pnpm build
 ```
 
-## 6. Make sure env files are correct
+### 4. Make sure env files are correct
 
 If you used `pnpm run bootstrap:okta`, then your .env files are 99% ready to go.
 
@@ -260,22 +258,18 @@ If you used `pnpm run bootstrap:okta`, then your .env files are 99% ready to go.
 
 ## Running the demo services
 
-### 7. Start todo0 application
+Start all services together:
 
 ```sh
-pnpm run start:todo0
+pnpm run dev
 ```
 
-### 8. Start todo0 MCP server
+Or run individually in separate terminals:
 
 ```sh
-pnpm run start:mcp
-```
-
-### 9. Start agent0 application
-
-```sh
-pnpm run start:agent0
+pnpm run start:todo0   # Start todo0 app server (port 5001)
+pnpm run start:mcp     # Start todo0 MCP server (port 5002)
+pnpm run start:agent0  # Start agent0 application (port 3000)
 ```
 
 ## Notes
