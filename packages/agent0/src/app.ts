@@ -202,6 +202,9 @@ export class AppServer {
 
     // Setup chat routes
     this.setupChatRoutes();
+
+    // Setup OAuth STS routes
+    this.setupOAuthStsRoutes();
   }
 
   // ============================================================================
@@ -280,6 +283,59 @@ export class AppServer {
           error: 'Internal Server Error',
           message: error.message,
         });
+      }
+    });
+  }
+
+  // ============================================================================
+  // OAuth STS Brokered Consent Routes
+  // ============================================================================
+
+  private setupOAuthStsRoutes(): void {
+    const authMiddleware = this.oktaAuthHelper
+      ? this.oktaAuthHelper.requireAuth()
+      : (_req: Request, _res: Response, next: any) => next();
+
+    // Trigger OAuth STS exchange (called after user completes consent)
+    this.app.post('/api/oauth-sts/exchange', authMiddleware, async (req, res) => {
+      try {
+        const agent = await getAgentForSession(req);
+        if (!agent) {
+          return res.status(503).json({ status: 'error', error: 'Agent not available' });
+        }
+
+        const stsHandler = agent.getOAuthStsHandler();
+        if (!stsHandler) {
+          return res.status(404).json({ status: 'error', error: 'OAuth STS not configured' });
+        }
+
+        const idToken = agent.getIdToken();
+        const result = await stsHandler.exchangeForISVToken(idToken);
+        res.json(result);
+      } catch (error: any) {
+        console.error('OAuth STS exchange error:', error);
+        res.status(500).json({ status: 'error', error: error.message });
+      }
+    });
+
+    // Check OAuth STS connection status
+    this.app.get('/api/oauth-sts/status', authMiddleware, async (req, res) => {
+      try {
+        const agent = await getAgentForSession(req);
+        if (!agent || !agent.isOAuthStsConfigured()) {
+          return res.json({ configured: false, connected: false });
+        }
+
+        const stsHandler = agent.getOAuthStsHandler();
+        const hasToken = stsHandler ? stsHandler.getCachedToken() !== null : false;
+
+        res.json({
+          configured: true,
+          connected: hasToken,
+        });
+      } catch (error: any) {
+        console.error('OAuth STS status error:', error);
+        res.status(500).json({ configured: false, connected: false, error: error.message });
       }
     });
   }

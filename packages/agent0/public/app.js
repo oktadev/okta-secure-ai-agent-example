@@ -66,6 +66,7 @@ let typingIndicator = null;
 let isAuthenticated = false;
 let oktaEnabled = false;
 let conversationHistory = [];
+let pendingMessage = null; // Stores message to retry after OAuth STS consent
 
 // State Management Constants
 const STORAGE_KEYS = {
@@ -446,6 +447,7 @@ async function checkConnection() {
             // Check authentication if Okta is enabled
             if (oktaEnabled) {
                 await checkAuthStatus();
+                await checkGitHubStatus();
             }
             
             return true;
@@ -602,16 +604,26 @@ async function processMessage(message) {
             const result = await response.json();
             
             if (result.success) {
+                // Check if OAuth STS interaction is required
+                if (result.data && result.data.interaction_required) {
+                    pendingMessage = message;
+                    showConsentPrompt(
+                        result.data.interaction_uri,
+                        result.message || 'GitHub authorization required.'
+                    );
+                    return;
+                }
+
                 // Show assistant message
                 if (result.message) {
                     addMessage(result.message, 'assistant');
                 }
-                
+
                 // Show tool results if any
                 if (result.toolResults && result.toolResults.length > 0) {
                     addMessage('', 'assistant', result);
                 }
-                
+
                 // Show data if available
                 if (result.data) {
                     addMessage('', 'assistant', result.data);
@@ -763,6 +775,103 @@ async function callTool(toolName, args = {}) {
     } catch (error) {
         console.error('Tool call error:', error);
         throw error;
+    }
+}
+
+// ============================================================================
+// OAuth STS Consent Flow
+// ============================================================================
+
+function showConsentPrompt(interactionUri, message) {
+    hideTypingIndicator();
+
+    const consentDiv = document.createElement('div');
+    consentDiv.className = 'message assistant consent-message';
+
+    const contentDiv = document.createElement('div');
+    contentDiv.className = 'message-content';
+
+    contentDiv.innerHTML = `
+        <div class="consent-prompt">
+            <p><strong>🔗 ${escapeHtml(message)}</strong></p>
+            <p>Click the link below to authorize access in a new tab, then click <strong>Retry Connection</strong>.</p>
+            <a href="${escapeHtml(interactionUri)}" target="_blank" rel="noopener noreferrer" class="consent-link">Authorize GitHub Access</a>
+            <button class="consent-retry-button" onclick="retryOAuthStsExchange(this)">Retry Connection</button>
+        </div>
+    `;
+
+    consentDiv.appendChild(contentDiv);
+    chatContainer.appendChild(consentDiv);
+    chatContainer.scrollTop = chatContainer.scrollHeight;
+}
+
+async function retryOAuthStsExchange(button) {
+    button.disabled = true;
+    button.textContent = 'Retrying...';
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/oauth-sts/exchange`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+        });
+
+        const result = await response.json();
+
+        if (result.status === 'success') {
+            // Remove the consent prompt
+            const consentMsg = button.closest('.consent-message');
+            if (consentMsg) consentMsg.remove();
+
+            addMessage('GitHub connected successfully!', 'system');
+            updateGitHubStatus(true);
+
+            // Re-send the original message
+            if (pendingMessage) {
+                const msg = pendingMessage;
+                pendingMessage = null;
+                await processMessage(msg);
+            }
+        } else if (result.status === 'interaction_required') {
+            button.disabled = false;
+            button.textContent = 'Retry Connection';
+            addMessage('Authorization not yet completed. Please complete the authorization in the opened tab, then click Retry again.', 'system');
+        } else {
+            button.disabled = false;
+            button.textContent = 'Retry Connection';
+            addMessage(`Authorization failed: ${result.error_description || result.error || 'Unknown error'}`, 'error');
+        }
+    } catch (error) {
+        console.error('OAuth STS retry error:', error);
+        button.disabled = false;
+        button.textContent = 'Retry Connection';
+        addMessage('Failed to connect. Please try again.', 'error');
+    }
+}
+
+// GitHub connection status indicator
+function updateGitHubStatus(connected) {
+    const indicator = document.getElementById('githubStatus');
+    if (indicator) {
+        indicator.style.display = 'inline-block';
+        indicator.textContent = connected ? '🐙 GitHub' : '🐙 GitHub (not connected)';
+        indicator.className = connected ? 'github-status connected' : 'github-status';
+    }
+}
+
+async function checkGitHubStatus() {
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/oauth-sts/status`, {
+            credentials: 'include',
+        });
+        if (response.ok) {
+            const data = await response.json();
+            if (data.configured) {
+                updateGitHubStatus(data.connected);
+            }
+        }
+    } catch (error) {
+        // Silently ignore - status check is optional
     }
 }
 
