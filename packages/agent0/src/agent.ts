@@ -695,6 +695,14 @@ export class Agent {
             required: ['owner', 'repo', 'pr_number', 'body'],
           },
         });
+        tools.push({
+          name: 'github_list_repos',
+          description: 'List GitHub repositories accessible to the authenticated user. Returns repo names, URLs, and descriptions.',
+          input_schema: {
+            type: 'object',
+            properties: {},
+          },
+        });
       }
 
       // Create system message with context
@@ -714,9 +722,10 @@ If you need more information, ask the user for clarification.`;
       // Add GitHub tool instructions if OAuth STS is configured
       if (this.oauthStsHandler) {
         systemMessage += `\n\nYou also have access to GitHub tools for interacting with GitHub repositories.
+- github_list_repos: List repositories accessible to the authenticated user
 - github_comment_on_pr: Post a comment on a GitHub pull request
 
-When a user asks you to do something on GitHub (like comment on a PR), use the appropriate GitHub tool.
+When a user asks you to do something on GitHub (like list repos or comment on a PR), use the appropriate GitHub tool.
 If GitHub authorization is needed, the system will handle the consent flow.`;
       }
 
@@ -747,7 +756,7 @@ The todos you manage belong to this user.`;
       for (const block of response.content) {
         if (block.type === 'tool_use') {
           // Check if this is a GitHub tool (handled differently from MCP tools)
-          if (block.name === 'github_comment_on_pr' && this.oauthStsHandler) {
+          if ((block.name === 'github_comment_on_pr' || block.name === 'github_list_repos') && this.oauthStsHandler) {
             const githubResult = await this.handleGitHubTool(block.name, block.input);
 
             // If interaction_required, return immediately to frontend
@@ -905,13 +914,46 @@ The todos you manage belong to this user.`;
     }
 
     // Execute the GitHub tool
-    if (toolName === 'github_comment_on_pr') {
-      const { owner, repo, pr_number, body } = input;
-      const result = await GitHubService.commentOnPR(accessToken, owner, repo, pr_number, body);
-      return { result };
+    const result = await this.executeGitHubAction(toolName, input, accessToken);
+
+    // If GitHub returned 401/403, the token may be revoked — clear cache and retry once
+    if (!result.success && result.error && /\(40[13]\)/.test(result.error)) {
+      console.log('⚠️  GitHub token rejected (possibly revoked). Clearing cache and re-exchanging...');
+      this.oauthStsHandler.clearCachedToken();
+
+      const stsRetry = await this.oauthStsHandler.exchangeForISVToken(this.config.idToken);
+      if (stsRetry.status === 'interaction_required') {
+        return {
+          interaction_required: true,
+          interaction_uri: stsRetry.interaction_uri,
+          message: 'GitHub access was revoked. Please re-authorize access.',
+        };
+      }
+      if (stsRetry.status === 'error') {
+        return { result: { success: false, error: stsRetry.error_description || stsRetry.error } };
+      }
+
+      // Retry the GitHub call with the fresh token
+      const retryResult = await this.executeGitHubAction(toolName, input, stsRetry.access_token);
+      return { result: retryResult };
     }
 
-    return { result: { success: false, error: `Unknown GitHub tool: ${toolName}` } };
+    return { result };
+  }
+
+  private async executeGitHubAction(
+    toolName: string,
+    input: any,
+    accessToken: string
+  ): Promise<{ success: boolean; [key: string]: any }> {
+    if (toolName === 'github_comment_on_pr') {
+      const { owner, repo, pr_number, body } = input;
+      return GitHubService.commentOnPR(accessToken, owner, repo, pr_number, body);
+    }
+    if (toolName === 'github_list_repos') {
+      return GitHubService.listRepos(accessToken);
+    }
+    return { success: false, error: `Unknown GitHub tool: ${toolName}` };
   }
 
   // ============================================================================

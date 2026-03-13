@@ -794,15 +794,156 @@ function showConsentPrompt(interactionUri, message) {
     contentDiv.innerHTML = `
         <div class="consent-prompt">
             <p><strong>🔗 ${escapeHtml(message)}</strong></p>
-            <p>Click the link below to authorize access in a new tab, then click <strong>Retry Connection</strong>.</p>
-            <a href="${escapeHtml(interactionUri)}" target="_blank" rel="noopener noreferrer" class="consent-link">Authorize GitHub Access</a>
-            <button class="consent-retry-button" onclick="retryOAuthStsExchange(this)">Retry Connection</button>
+            <p>A popup will open for authorization. After you authorize, the agent will automatically continue.</p>
+            <button class="consent-retry-button" onclick="openConsentPopup('${escapeHtml(interactionUri)}', this)">Authorize GitHub Access</button>
+            <span class="consent-status"></span>
         </div>
     `;
 
     consentDiv.appendChild(contentDiv);
     chatContainer.appendChild(consentDiv);
     chatContainer.scrollTop = chatContainer.scrollHeight;
+
+    // Auto-open the consent popup
+    openConsentPopup(interactionUri, consentDiv.querySelector('.consent-retry-button'));
+}
+
+let consentPollTimer = null;
+
+function openConsentPopup(interactionUri, button) {
+    // Open consent URI in a popup window
+    const popup = window.open(interactionUri, 'github_consent', 'width=600,height=700,popup=yes');
+
+    if (!popup) {
+        // Popup was blocked — fall back to manual link
+        const statusEl = button.closest('.consent-prompt').querySelector('.consent-status');
+        statusEl.textContent = 'Popup blocked. ';
+        const link = document.createElement('a');
+        link.href = interactionUri;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.textContent = 'Click here to authorize manually';
+        link.className = 'consent-link';
+        statusEl.appendChild(link);
+        button.textContent = 'Retry Connection';
+        button.onclick = () => retryOAuthStsExchange(button);
+        return;
+    }
+
+    button.disabled = true;
+    button.textContent = 'Waiting for authorization...';
+
+    // Poll: check if popup closed, then try the exchange with retries
+    if (consentPollTimer) clearInterval(consentPollTimer);
+    consentPollTimer = setInterval(async () => {
+        if (popup.closed) {
+            clearInterval(consentPollTimer);
+            consentPollTimer = null;
+            button.textContent = 'Completing...';
+            // Give Okta time to process the callback before retrying
+            await retryOAuthStsWithBackoff(button);
+        }
+    }, 1000);
+}
+
+async function retryOAuthStsWithBackoff(button) {
+    const maxAttempts = 5;
+    const delays = [2000, 3000, 4000, 5000, 5000]; // ms between attempts
+
+    // Replace consent prompt with a progress indicator
+    const consentMsg = button.closest('.consent-message');
+    const contentDiv = consentMsg ? consentMsg.querySelector('.message-content') : null;
+    if (contentDiv) {
+        contentDiv.innerHTML = `
+            <div class="consent-progress">
+                <div class="consent-spinner"></div>
+                <p class="consent-progress-text">Connecting to GitHub...</p>
+            </div>
+        `;
+    }
+    const progressText = contentDiv ? contentDiv.querySelector('.consent-progress-text') : null;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        const steps = [
+            'Connecting to GitHub...',
+            'Waiting for authorization to complete...',
+            'Exchanging tokens...',
+            'Almost there...',
+            'Finalizing connection...',
+        ];
+        if (progressText) progressText.textContent = steps[attempt];
+
+        // Wait before each attempt to let Okta process the callback
+        await new Promise(resolve => setTimeout(resolve, delays[attempt]));
+
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/oauth-sts/exchange`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+            });
+
+            const result = await response.json();
+
+            if (result.status === 'success') {
+                // Show success briefly before removing
+                if (contentDiv) {
+                    contentDiv.innerHTML = `
+                        <div class="consent-progress">
+                            <span style="font-size: 1.5rem;">&#x2705;</span>
+                            <p class="consent-progress-text">GitHub connected!</p>
+                        </div>
+                    `;
+                }
+
+                updateGitHubStatus(true);
+
+                // Brief pause to show success state, then clean up and continue
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                if (consentMsg) consentMsg.remove();
+
+                addMessage('GitHub connected successfully!', 'system');
+
+                // Re-send the original message
+                if (pendingMessage) {
+                    const msg = pendingMessage;
+                    pendingMessage = null;
+                    await processMessage(msg);
+                }
+                return;
+            }
+
+            if (result.status !== 'interaction_required') {
+                // Real error, stop retrying
+                if (contentDiv) {
+                    contentDiv.innerHTML = `
+                        <div class="consent-progress">
+                            <span style="font-size: 1.5rem;">&#x274C;</span>
+                            <p class="consent-progress-text">Authorization failed: ${escapeHtml(result.error_description || result.error || 'Unknown error')}</p>
+                            <button class="consent-retry-button" onclick="retryOAuthStsExchange(this)">Retry</button>
+                        </div>
+                    `;
+                }
+                return;
+            }
+
+            // interaction_required — Okta hasn't processed yet, keep retrying
+            console.log(`OAuth STS attempt ${attempt + 1}: still interaction_required, retrying...`);
+        } catch (error) {
+            console.error('OAuth STS retry error:', error);
+        }
+    }
+
+    // Exhausted all attempts
+    if (contentDiv) {
+        contentDiv.innerHTML = `
+            <div class="consent-progress">
+                <span style="font-size: 1.5rem;">&#x23F3;</span>
+                <p class="consent-progress-text">Authorization is taking longer than expected.</p>
+                <button class="consent-retry-button" onclick="retryOAuthStsExchange(this)">Retry Connection</button>
+            </div>
+        `;
+    }
 }
 
 async function retryOAuthStsExchange(button) {
