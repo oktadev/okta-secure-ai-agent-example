@@ -1,4 +1,4 @@
-// github-service.ts - GitHub API client using ISV access token
+// connections/application/tools/github.ts - GitHub API client using ISV access token
 import axios from 'axios';
 
 // ============================================================================

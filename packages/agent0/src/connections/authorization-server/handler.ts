@@ -1,4 +1,7 @@
-// token-exchange.ts - Cross-App Access (ID-JAG) Token Exchange
+// connections/authorization-server/handler.ts - Cross-App Access (ID-JAG) Token Exchange
+//
+// Connection type: "Authorization server" in Okta's Add-connection UI.
+// Flow: ID token -> ID-JAG (Okta Org AS) -> MCP access token (custom AS).
 import { Request, Response } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';

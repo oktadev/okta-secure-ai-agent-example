@@ -4,9 +4,9 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import Anthropic from '@anthropic-ai/sdk';
 import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
-import { TokenExchangeHandler, TokenExchangeConfig, parseScopeChallenge } from './auth/token-exchange.js';
-import { OAuthStsHandler, OAuthStsConfig } from './auth/oauth-sts.js';
-import { GitHubService } from './github/github-service.js';
+import { TokenExchangeHandler, TokenExchangeConfig, parseScopeChallenge } from './connections/authorization-server/handler.js';
+import { OAuthStsHandler, OAuthStsConfig } from './connections/application/handler.js';
+import { GitHubService } from './connections/application/tools/github.js';
 
 // ============================================================================
 // Scope Challenge Types

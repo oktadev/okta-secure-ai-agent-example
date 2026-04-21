@@ -1,4 +1,7 @@
-// oauth-sts.ts - OAuth STS Brokered Consent Token Exchange
+// connections/application/handler.ts - OAuth STS Brokered Consent Token Exchange
+//
+// Connection type: "Application" in Okta's Add-connection UI.
+// Flow: ID token -> Okta STS exchange (brokered consent) -> ISV access token.
 import * as fs from 'fs';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
