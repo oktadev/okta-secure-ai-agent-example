@@ -48,7 +48,9 @@ export class OAuthStsHandler {
 
   private loadPrivateKey(): void {
     try {
-      const privateKeyPath = path.resolve(__dirname, '../..', this.config.privateKeyFile);
+      // __dirname at runtime: dist/connections/application
+      // -> package root (three levels up) holds the .pem referenced by AI_AGENT_PRIVATE_KEY_FILE
+      const privateKeyPath = path.resolve(__dirname, '../../..', this.config.privateKeyFile);
       this.privateKey = fs.readFileSync(privateKeyPath, 'utf8');
       console.log('🔑 Private key loaded for OAuth STS exchange');
     } catch (error: any) {
