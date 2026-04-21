@@ -25,6 +25,8 @@ graph TB
     Okta_Org_AS[Okta Org AS<br/>/oauth2/v1<br/>For human SSO & ID-JAGs]
     Okta_IDP
     Okta_MCP_AS[Todo MCP Authorization Server<br/>/oauth2/aus.../v1<br/>For MCP Server protection]
+    Okta_STS[Okta STS<br/>/oauth2/v1/token<br/>Brokered Consent]
+    GitHub[GitHub API]
 
     subgraph Agent0[agent0]
         subgraph ResourceServer[Resource server :3000]
@@ -51,6 +53,8 @@ graph TB
     MCP_Client -->|MCP Protocol<br/>with JWT| MCP_Server
     MCP_Server -->|Validates JWT| Okta_MCP_AS
     Chat-->AgentIdentity
+    AgentIdentity -->|OAuth STS token exchange| Okta_STS
+    AgentIdentity -->|ISV access token| GitHub
 
     style Auth fill:#99ccff
     style UI fill:#99ccff
@@ -64,6 +68,8 @@ graph TB
     style ResourceServer fill:#cce6ff,stroke:#0066cc,stroke-width:1px
     style AgentIdentity fill:#d9f0ff,stroke:#0066cc,stroke-width:1px
     style Agent0 fill:#f0f8ff,stroke:#0066cc,stroke-width:2px
+    style Okta_STS fill:#e8f4f8
+    style GitHub fill:#f0f0f0
     style Todo0 fill:#fff9f0,stroke:#ff9900,stroke-width:2px
 ```
 
@@ -107,6 +113,7 @@ graph TB
 - The MCP Client (within Agent Identity) communicates with todo0's MCP Server on port 5002 using the MCP access token
 - The todo0 MCP Server validates JWTs and scopes issued by **Todo MCP Authorization Server**
 - The LLM Integration enables Claude AI capabilities for chat and agent operations
+- **Third-Party Access (OAuth STS)**: Agent exchanges user's ID token via Okta STS for an ISV access token. First request triggers user consent (`interaction_required`), subsequent requests return cached token. Currently used for GitHub API access.
 
 ### Features
 
@@ -114,6 +121,7 @@ graph TB
 - MCP client for interacting with the MCP server
 - Okta OAuth2 authentication with ID-JAG token exchange
 - JWT validation and scope-based authorization
+- OAuth STS brokered consent for third-party integrations (e.g., GitHub)
 - pnpm workspace structure
 
 ## Packages
@@ -147,6 +155,12 @@ Before running the bootstrap script, you'll need:
    - Sign up at [https://console.anthropic.com/](https://console.anthropic.com/)
    - Alternative: Configure AWS Bedrock credentials instead
    - **Note** These will need to be configured in packages/agent0/.env.agent at a later step.
+
+6. **Okta Feature Flags** (optional, for GitHub integration via OAuth STS)
+   - `SECURE_AI_AGENTS` and `SECURE_AI_OAUTH_STS` must be enabled on your Okta org
+   - An ISV app (e.g., GitHub) from the OIN catalog with Resource Server tab configured
+   - A managed connection on the AI agent pointing to the ISV app
+   - See Okta OAuth STS documentation for setup details
 
 ### Automated Configuration
 
@@ -255,6 +269,8 @@ pnpm build
 If you used `pnpm run bootstrap:okta`, then your .env files are 99% ready to go.
 
 **Note** make sure that you update packages/agent0/.env.agent with either the anthropic keys and values or the aws bedrock keys and values so the agent can interact with an LLM. Comment out the set of key value pairs you are not using.
+
+**Optional** To enable GitHub integration via OAuth STS brokered consent, set `OAUTH_STS_RESOURCE` in `packages/agent0/.env.agent` to the Resource Indicator URI from your managed connection (Directory > AI Agents > {Agent} > Managed connections > Resource Indicator).
 
 ## Running the demo services
 

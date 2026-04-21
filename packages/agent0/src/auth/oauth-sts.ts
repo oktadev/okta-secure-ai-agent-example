@@ -152,8 +152,6 @@ export class OAuthStsHandler {
       console.log(`⏰ Expires in: ${expires_in}s`);
       console.log(`🔑 Token type: ${token_type}`);
       console.log(`📋 Scopes granted: ${scope || '(none returned)'}`);
-      console.log(`🔍 Token prefix: ${access_token.substring(0, 12)}...`);
-      console.log(`📦 Full STS response keys: ${Object.keys(response.data).join(', ')}`);
 
       return { status: 'success', access_token, token_type, scope, expires_in };
     } catch (error: any) {

@@ -39,10 +39,6 @@ export class GitHubService {
       const status = error.response?.status;
       const message = error.response?.data?.message || error.message;
       console.error(`❌ GitHub API error (${status}):`, message);
-      console.error(`   URL: https://api.github.com/repos/${owner}/${repo}/issues/${prNumber}/comments`);
-      console.error(`   Response headers:`, JSON.stringify(error.response?.headers || {}, null, 2));
-      console.error(`   Response body:`, JSON.stringify(error.response?.data || {}, null, 2));
-      console.error(`   Token prefix: ${accessToken.substring(0, 8)}...`);
       return {
         success: false,
         error: `GitHub API error (${status}): ${message}`,
@@ -83,9 +79,6 @@ export class GitHubService {
       const status = error.response?.status;
       const message = error.response?.data?.message || error.message;
       console.error(`❌ GitHub API error (${status}):`, message);
-      console.error(`   Response headers:`, JSON.stringify(error.response?.headers || {}, null, 2));
-      console.error(`   Response body:`, JSON.stringify(error.response?.data || {}, null, 2));
-      console.error(`   Token prefix: ${accessToken.substring(0, 8)}...`);
       return {
         success: false,
         error: `GitHub API error (${status}): ${message}`,
