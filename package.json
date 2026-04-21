@@ -36,6 +36,9 @@
     "setup:opa": "tsx scripts/connections/secret/setup.ts",
     "rollback:pam": "tsx scripts/connections/secret/rollback.ts",
     "link:opa": "tsx scripts/connections/secret/link.ts",
+    "register:mcp": "tsx scripts/connections/mcp-server/register.ts",
+    "validate:mcp": "tsx scripts/connections/mcp-server/validate.ts",
+    "rollback:mcp": "tsx scripts/connections/mcp-server/rollback.ts",
     "typecheck:scripts": "tsc --project scripts/tsconfig.json --noEmit"
   },
   "keywords": [],
