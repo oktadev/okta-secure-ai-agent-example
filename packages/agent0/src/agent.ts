@@ -5,6 +5,8 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import Anthropic from '@anthropic-ai/sdk';
 import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
 import { TokenExchangeHandler, TokenExchangeConfig, parseScopeChallenge } from './auth/token-exchange.js';
+import { OAuthStsHandler, OAuthStsConfig } from './auth/oauth-sts.js';
+import { GitHubService } from './github/github-service.js';
 
 // ============================================================================
 // Scope Challenge Types
@@ -226,6 +228,9 @@ export interface AgentConfig {
   // Token Exchange Config
   tokenExchange?: TokenExchangeConfig;
 
+  // OAuth STS Brokered Consent Config
+  oauthSts?: OAuthStsConfig;
+
   // Anthropic Direct
   anthropicApiKey?: string;
   anthropicModel?: string;
@@ -268,13 +273,41 @@ const buildTokenExchangeConfig = (): TokenExchangeConfig | undefined => {
   return undefined;
 };
 
+// Build OAuthStsConfig from environment variables
+const buildOAuthStsConfig = (): OAuthStsConfig | undefined => {
+  const oktaDomain = process.env.OKTA_DOMAIN;
+  const agentId = process.env.AI_AGENT_ID;
+  const privateKeyFile = process.env.AI_AGENT_PRIVATE_KEY_FILE;
+  const privateKeyKid = process.env.AI_AGENT_PRIVATE_KEY_KID;
+  const resource = process.env.OAUTH_STS_RESOURCE;
+
+  if (oktaDomain && agentId && privateKeyFile && privateKeyKid && resource) {
+    console.log('✅ OAuth STS brokered consent configured');
+    console.log(`   Resource: ${resource}`);
+    return {
+      oktaDomain,
+      clientId: agentId,
+      privateKeyFile,
+      privateKeyKid,
+      resource,
+    };
+  }
+  if (resource) {
+    console.warn('⚠️  OAUTH_STS_RESOURCE set but missing required agent identity vars (OKTA_DOMAIN, AI_AGENT_ID, AI_AGENT_PRIVATE_KEY_FILE, AI_AGENT_PRIVATE_KEY_KID)');
+  }
+  return undefined;
+};
+
 // Build agentConfig using validated LLM configuration
+const oauthStsConfig = buildOAuthStsConfig();
+
 const agentConfig: Omit<AgentConfig, 'idToken' | 'userContext'> = llmConfig.llmProvider === 'anthropic'
   ? {
       mcpServerUrl: llmConfig.mcpServerUrl,
       name: 'agent0',
       version: '1.0.0',
       tokenExchange: buildTokenExchangeConfig(),
+      oauthSts: oauthStsConfig,
       anthropicApiKey: llmConfig.anthropicApiKey,
       anthropicModel: llmConfig.anthropicModel,
       enableLLM: true,
@@ -284,6 +317,7 @@ const agentConfig: Omit<AgentConfig, 'idToken' | 'userContext'> = llmConfig.llmP
       name: 'agent0',
       version: '1.0.0',
       tokenExchange: buildTokenExchangeConfig(),
+      oauthSts: oauthStsConfig,
       awsRegion: llmConfig.awsRegion,
       awsAccessKeyId: llmConfig.awsAccessKeyId,
       awsSecretAccessKey: llmConfig.awsSecretAccessKey,
@@ -357,6 +391,7 @@ export class Agent {
     content: string | Array<any>;
   }> = [];
   private tokenExchangeHandler: TokenExchangeHandler | null = null;
+  private oauthStsHandler: OAuthStsHandler | null = null;
   private grantedScopes: string[] = []; // Tracks scopes from last token exchange
 
   constructor(config: AgentConfig) {
@@ -374,6 +409,11 @@ export class Agent {
     // Initialize Token Exchange Handler if configured
     if (config.tokenExchange) {
       this.tokenExchangeHandler = new TokenExchangeHandler(config.tokenExchange);
+    }
+
+    // Initialize OAuth STS Handler if configured
+    if (config.oauthSts) {
+      this.oauthStsHandler = new OAuthStsHandler(config.oauthSts);
     }
 
     // Initialize LLM client - Priority: Anthropic Direct > AWS Bedrock
@@ -630,7 +670,7 @@ export class Agent {
       });
 
       // Convert MCP tools to Anthropic tool format
-      const tools = this.availableTools.map((tool) => ({
+      const tools: any[] = this.availableTools.map((tool) => ({
         name: tool.name,
         description: tool.description,
         input_schema: tool.inputSchema || {
@@ -638,6 +678,32 @@ export class Agent {
           properties: {},
         },
       }));
+
+      // Add GitHub tools if OAuth STS is configured
+      if (this.oauthStsHandler) {
+        tools.push({
+          name: 'github_comment_on_pr',
+          description: 'Post a comment on a GitHub pull request. Requires owner, repo, pr_number, and comment body.',
+          input_schema: {
+            type: 'object',
+            properties: {
+              owner: { type: 'string', description: 'GitHub repo owner/org' },
+              repo: { type: 'string', description: 'GitHub repo name' },
+              pr_number: { type: 'number', description: 'Pull request number' },
+              body: { type: 'string', description: 'Comment text to post' },
+            },
+            required: ['owner', 'repo', 'pr_number', 'body'],
+          },
+        });
+        tools.push({
+          name: 'github_list_repos',
+          description: 'List GitHub repositories accessible to the authenticated user. Returns repo names, URLs, and descriptions.',
+          input_schema: {
+            type: 'object',
+            properties: {},
+          },
+        });
+      }
 
       // Create system message with context
       let systemMessage = `You are a helpful AI assistant that can manage todos using the available MCP tools.
@@ -652,6 +718,16 @@ When the user asks to do something, analyze their request and call the appropria
 
 Always be helpful and conversational. If you successfully complete an action, let the user know in a friendly way.
 If you need more information, ask the user for clarification.`;
+
+      // Add GitHub tool instructions if OAuth STS is configured
+      if (this.oauthStsHandler) {
+        systemMessage += `\n\nYou also have access to GitHub tools for interacting with GitHub repositories.
+- github_list_repos: List repositories accessible to the authenticated user
+- github_comment_on_pr: Post a comment on a GitHub pull request
+
+When a user asks you to do something on GitHub (like list repos or comment on a PR), use the appropriate GitHub tool.
+If GitHub authorization is needed, the system will handle the consent flow.`;
+      }
 
       // Add user context if available
       if (userContext) {
@@ -679,31 +755,64 @@ The todos you manage belong to this user.`;
       // Execute all tool calls and collect results
       for (const block of response.content) {
         if (block.type === 'tool_use') {
-          // Execute the MCP tool
-          const result = await this.callTool(block.name, block.input);
+          // Check if this is a GitHub tool (handled differently from MCP tools)
+          if ((block.name === 'github_comment_on_pr' || block.name === 'github_list_repos') && this.oauthStsHandler) {
+            const githubResult = await this.handleGitHubTool(block.name, block.input);
 
-          // Parse the result
-          let parsedResult: any = {};
-          if (result.content && result.content[0]) {
-            try {
-              parsedResult = JSON.parse(result.content[0].text);
-            } catch {
-              parsedResult = result;
+            // If interaction_required, return immediately to frontend
+            if (githubResult.interaction_required) {
+              return {
+                success: true,
+                message: githubResult.message || 'GitHub authorization required.',
+                data: {
+                  interaction_required: true,
+                  interaction_uri: githubResult.interaction_uri,
+                  pendingToolCall: {
+                    name: block.name,
+                    input: block.input,
+                  },
+                },
+              };
             }
+
+            toolResults.push({
+              tool: block.name,
+              arguments: block.input,
+              result: githubResult.result,
+            });
+
+            toolResultBlocks.push({
+              type: 'tool_result',
+              tool_use_id: block.id,
+              content: JSON.stringify(githubResult.result),
+            });
+          } else {
+            // Execute the MCP tool
+            const result = await this.callTool(block.name, block.input);
+
+            // Parse the result
+            let parsedResult: any = {};
+            if (result.content && result.content[0]) {
+              try {
+                parsedResult = JSON.parse(result.content[0].text);
+              } catch {
+                parsedResult = result;
+              }
+            }
+
+            toolResults.push({
+              tool: block.name,
+              arguments: block.input,
+              result: parsedResult,
+            });
+
+            // Collect tool result blocks for next request
+            toolResultBlocks.push({
+              type: 'tool_result',
+              tool_use_id: block.id,
+              content: JSON.stringify(result),
+            });
           }
-
-          toolResults.push({
-            tool: block.name,
-            arguments: block.input,
-            result: parsedResult,
-          });
-
-          // Collect tool result blocks for next request
-          toolResultBlocks.push({
-            type: 'tool_result',
-            tool_use_id: block.id,
-            content: JSON.stringify(result),
-          });
         } else if (block.type === 'text') {
           if (block.text) {
             responseMessage += block.text;
@@ -765,6 +874,86 @@ The todos you manage belong to this user.`;
         message: error.message || 'LLM processing failed',
       };
     }
+  }
+
+  // ============================================================================
+  // GitHub Tool Execution (via OAuth STS)
+  // ============================================================================
+
+  private async handleGitHubTool(
+    toolName: string,
+    input: any
+  ): Promise<{
+    interaction_required?: boolean;
+    interaction_uri?: string;
+    message?: string;
+    result?: any;
+  }> {
+    if (!this.oauthStsHandler) {
+      return { result: { success: false, error: 'OAuth STS not configured' } };
+    }
+
+    // Check for cached token first, otherwise exchange
+    let accessToken = this.oauthStsHandler.getCachedToken();
+    if (!accessToken) {
+      const stsResult = await this.oauthStsHandler.exchangeForISVToken(this.config.idToken);
+
+      if (stsResult.status === 'interaction_required') {
+        return {
+          interaction_required: true,
+          interaction_uri: stsResult.interaction_uri,
+          message: stsResult.error_description || 'GitHub authorization required. Please authorize access, then click Retry.',
+        };
+      }
+
+      if (stsResult.status === 'error') {
+        return { result: { success: false, error: stsResult.error_description || stsResult.error } };
+      }
+
+      accessToken = stsResult.access_token;
+    }
+
+    // Execute the GitHub tool
+    const result = await this.executeGitHubAction(toolName, input, accessToken);
+
+    // If GitHub returned 401/403, the token may be revoked — clear cache and retry once
+    if (!result.success && result.error && /\(40[13]\)/.test(result.error)) {
+      console.log('⚠️  GitHub token rejected (possibly revoked). Clearing cache and re-exchanging...');
+      this.oauthStsHandler.clearCachedToken();
+
+      const stsRetry = await this.oauthStsHandler.exchangeForISVToken(this.config.idToken);
+      if (stsRetry.status === 'interaction_required') {
+        return {
+          interaction_required: true,
+          interaction_uri: stsRetry.interaction_uri,
+          message: 'GitHub access was revoked. Please re-authorize access.',
+        };
+      }
+      if (stsRetry.status === 'error') {
+        return { result: { success: false, error: stsRetry.error_description || stsRetry.error } };
+      }
+
+      // Retry the GitHub call with the fresh token
+      const retryResult = await this.executeGitHubAction(toolName, input, stsRetry.access_token);
+      return { result: retryResult };
+    }
+
+    return { result };
+  }
+
+  private async executeGitHubAction(
+    toolName: string,
+    input: any,
+    accessToken: string
+  ): Promise<{ success: boolean; [key: string]: any }> {
+    if (toolName === 'github_comment_on_pr') {
+      const { owner, repo, pr_number, body } = input;
+      return GitHubService.commentOnPR(accessToken, owner, repo, pr_number, body);
+    }
+    if (toolName === 'github_list_repos') {
+      return GitHubService.listRepos(accessToken);
+    }
+    return { success: false, error: `Unknown GitHub tool: ${toolName}` };
   }
 
   // ============================================================================
@@ -835,5 +1024,21 @@ The todos you manage belong to this user.`;
 
   isLLMEnabled(): boolean {
     return this.anthropic !== null || this.bedrockClient !== null;
+  }
+
+  // ============================================================================
+  // OAuth STS (Brokered Consent) Accessors
+  // ============================================================================
+
+  isOAuthStsConfigured(): boolean {
+    return this.oauthStsHandler !== null;
+  }
+
+  getOAuthStsHandler(): OAuthStsHandler | null {
+    return this.oauthStsHandler;
+  }
+
+  getIdToken(): string {
+    return this.config.idToken;
   }
 }

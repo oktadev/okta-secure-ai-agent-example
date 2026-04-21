@@ -937,3 +937,97 @@ pre {
 .primary-button:hover {
     background: #5568d3;
 }
+
+/* GitHub Status Indicator */
+.github-status {
+    font-size: 12px;
+    padding: 4px 10px;
+    border-radius: 12px;
+    background: #e0e0e0;
+    color: #666;
+}
+
+.github-status.connected {
+    background: #e8f5e9;
+    color: #2e7d32;
+}
+
+/* OAuth STS Consent Prompt */
+.consent-prompt {
+    background: #fff8e1;
+    border: 1px solid #ffcc02;
+    border-radius: 8px;
+    padding: 16px;
+}
+
+.consent-prompt p {
+    margin: 0 0 10px 0;
+}
+
+.consent-link {
+    display: inline-block;
+    background: #24292e;
+    color: white;
+    padding: 8px 16px;
+    border-radius: 6px;
+    text-decoration: none;
+    font-size: 14px;
+    margin-right: 10px;
+    margin-bottom: 8px;
+    transition: background 0.2s ease;
+}
+
+.consent-link:hover {
+    background: #444d56;
+}
+
+.consent-retry-button {
+    display: inline-block;
+    background: #667eea;
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: background 0.2s ease;
+}
+
+.consent-retry-button:hover {
+    background: #5568d3;
+}
+
+.consent-retry-button:disabled {
+    background: #999;
+    cursor: not-allowed;
+}
+
+/* OAuth STS Consent Progress */
+.consent-progress {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding: 20px;
+    text-align: center;
+}
+
+.consent-progress-text {
+    margin: 0;
+    font-size: 0.95rem;
+    color: #555;
+    font-weight: 500;
+}
+
+.consent-spinner {
+    width: 36px;
+    height: 36px;
+    border: 4px solid #e0e0e0;
+    border-top: 4px solid #667eea;
+    border-radius: 50%;
+    animation: consent-spin 0.8s linear infinite;
+}
+
+@keyframes consent-spin {
+    to { transform: rotate(360deg); }
+}
