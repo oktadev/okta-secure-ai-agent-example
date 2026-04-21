@@ -3,9 +3,9 @@
 // Wraps POST/GET/PATCH/DELETE on /resource-servers/api/v1/mcp-servers/* plus
 // lifecycle activate/deactivate and the authorization-servers sub-resource.
 //
-// Auth: OAuth 2.0 bearer token. Caller supplies the token (typically from an
-// admin console browser session or an API service app with
-// `okta.resourceServers.mcpServers.manage` scope + SUPER_ADMIN role).
+// Auth: Okta SSWS API token (same convention as bootstrap-okta-tenant.ts and
+// scripts/lib/agent-identity-api.ts). A SUPER_ADMIN-scoped SSWS token works on
+// the /resource-servers/api/v1/mcp-servers/* endpoints.
 
 import axios, { AxiosError, AxiosInstance } from 'axios';
 
@@ -63,8 +63,8 @@ export interface OktaListResponse<T> {
 export interface OktaMcpClientConfig {
   /** Okta org base URL, e.g. https://dev-123.okta.com (no trailing slash). */
   orgUrl: string;
-  /** OAuth 2.0 bearer token with `okta.resourceServers.mcpServers.manage` scope. */
-  token: string;
+  /** Okta SSWS API token (SUPER_ADMIN). Same convention as OKTA_API_TOKEN. */
+  apiToken: string;
 }
 
 // ============================================================================
@@ -79,7 +79,7 @@ export class OktaMcpClient {
     this.http = axios.create({
       baseURL,
       headers: {
-        Authorization: `Bearer ${config.token}`,
+        Authorization: `SSWS ${config.apiToken}`,
         Accept: 'application/json',
       },
       timeout: 20_000,
@@ -98,8 +98,31 @@ export class OktaMcpClient {
   // --- register --------------------------------------------------------------
 
   async register(payload: McpServerRegistration): Promise<McpServer> {
-    const res = await this.http.post<McpServer>('/resource-servers/api/v1/mcp-servers', payload)
+    const res = await this.http.post<unknown>('/resource-servers/api/v1/mcp-servers', payload)
       .catch(rethrow);
+    // Okta's POST response shape for this endpoint has been inconsistent in
+    // the Secure AI Agents preview (seen: empty body with 400 even though the
+    // record was created, and empty body with 202 Location header). Normalize:
+    // look for a top-level `id`, common envelopes, the Location header, or
+    // fall back to LIST + match on resourceUrl.
+    const body = res.data as any;
+    const direct = extractMcpServer(body);
+    if (direct) return direct;
+
+    const locationId = extractIdFromLocation(res.headers?.location);
+    if (locationId) return this.get(locationId);
+
+    const list = await this.list({ limit: 50 });
+    const match = list.data.find((m) => m.resourceUrl === payload.resourceUrl);
+    if (match) return match;
+
+    throw new Error(
+      `Register succeeded but response shape was unrecognized and no list entry matched resourceUrl=${payload.resourceUrl}. Raw body: ${JSON.stringify(body)}`
+    );
+  }
+
+  async listRaw(): Promise<unknown> {
+    const res = await this.http.get('/resource-servers/api/v1/mcp-servers').catch(rethrow);
     return res.data;
   }
 
@@ -179,6 +202,25 @@ export class OktaMcpClient {
 // ============================================================================
 // Error formatting
 // ============================================================================
+
+function extractMcpServer(body: any): McpServer | null {
+  if (!body || typeof body !== 'object') return null;
+  if (typeof body.id === 'string') return body as McpServer;
+  // Common envelope shapes
+  for (const key of ['data', 'mcpServer', 'resource', 'result']) {
+    const inner = body[key];
+    if (inner && typeof inner === 'object' && typeof inner.id === 'string') {
+      return inner as McpServer;
+    }
+  }
+  return null;
+}
+
+function extractIdFromLocation(location?: string): string | null {
+  if (!location) return null;
+  const m = location.match(/\/mcp-servers\/([A-Za-z0-9]+)(?:[/?#]|$)/);
+  return m ? m[1] : null;
+}
 
 function rethrow(err: unknown): never {
   const ax = err as AxiosError<{ errorSummary?: string; errorCode?: string; errorCauses?: Array<{ errorSummary: string }> }>;

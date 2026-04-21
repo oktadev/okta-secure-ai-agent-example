@@ -25,18 +25,21 @@ async function main() {
   console.log(chalk.gray(`  mcpServerId: ${state.mcpServerId}`));
   console.log(chalk.gray(`  resourceUrl: ${state.resourceUrl}\n`));
 
+  const envApiToken = process.env.OKTA_API_TOKEN;
+
   const answers = await prompts([
     {
-      type: 'password',
-      name: 'token',
-      message: 'OAuth 2.0 bearer token (mcpServers.read or manage scope):',
+      type: envApiToken ? null : 'password',
+      name: 'apiToken',
+      message: 'Okta API token (SSWS):',
       validate: (v: string) => (v ? true : 'Required'),
     },
   ], { onCancel: () => process.exit(0) });
 
-  if (!answers.token) process.exit(1);
+  const apiToken = envApiToken || answers.apiToken;
+  if (!apiToken) process.exit(1);
 
-  const client = new OktaMcpClient({ orgUrl: state.oktaOrgUrl, token: answers.token });
+  const client = new OktaMcpClient({ orgUrl: state.oktaOrgUrl, apiToken });
 
   const getSpinner = ora('Fetching MCP server…').start();
   let mcp;

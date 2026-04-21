@@ -15,13 +15,15 @@ managed connection on any AI agent.
 
 State file: `.mcp-register-state.json` (gitignored).
 
-## Prerequisite: an OAuth bearer token
+## Prerequisite: an Okta SSWS API token
 
-Okta's MCP Servers API requires an OAuth 2.0 access token with
-`okta.resourceServers.mcpServers.manage` scope (or SUPER_ADMIN role).
-Easiest path for dev: open the Okta admin console, grab the Authorization
-header from any admin-API call in DevTools → Network, strip the `Bearer `
-prefix, and paste when the script prompts.
+Okta's MCP Servers API accepts the standard SSWS API token used elsewhere
+in this repo (same convention as `OKTA_API_TOKEN` consumed by
+`bootstrap:okta` and the Agent Identity API client). The token needs
+SUPER_ADMIN role.
+
+The scripts read `OKTA_ORG_URL` and `OKTA_API_TOKEN` from the environment
+when present, and fall back to interactive prompts otherwise.
 
 ## Prerequisite: a tunnel for localhost MCPs
 

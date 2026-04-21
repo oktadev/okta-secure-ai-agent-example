@@ -39,6 +39,7 @@
     "register:mcp": "tsx scripts/connections/mcp-server/register.ts",
     "validate:mcp": "tsx scripts/connections/mcp-server/validate.ts",
     "rollback:mcp": "tsx scripts/connections/mcp-server/rollback.ts",
+    "list:mcp": "tsx scripts/connections/mcp-server/list.ts",
     "typecheck:scripts": "tsc --project scripts/tsconfig.json --noEmit"
   },
   "keywords": [],

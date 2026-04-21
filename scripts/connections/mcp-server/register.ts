@@ -3,7 +3,7 @@
  * register.ts - Register todo0 (or any MCP) with Okta as a managed MCP Server
  *
  * Flow:
- *   1. Prompt operator for Okta org URL + OAuth bearer token + MCP resourceUrl.
+ *   1. Read Okta org URL + SSWS API token from env (or prompt) + MCP resourceUrl.
  *   2. POST /resource-servers/api/v1/mcp-servers → creates MCP in PENDING state.
  *   3. Poll GET /mcp-servers/{id} until status leaves PENDING.
  *      Okta fetches `<resourceUrl>/.well-known/oauth-protected-resource` and
@@ -34,21 +34,23 @@ async function main() {
     process.exit(1);
   }
 
-  console.log(chalk.gray('Prerequisite: operator needs an Okta OAuth 2.0 bearer token'));
-  console.log(chalk.gray('with `okta.resourceServers.mcpServers.manage` scope or SUPER_ADMIN role.'));
-  console.log(chalk.gray('Easiest path: copy an Authorization header from the Okta admin console\n'));
+  console.log(chalk.gray('Prerequisite: an Okta SSWS API token with SUPER_ADMIN role.'));
+  console.log(chalk.gray('Set OKTA_ORG_URL and OKTA_API_TOKEN in your env to skip these prompts.\n'));
+
+  const envOrgUrl = process.env.OKTA_ORG_URL;
+  const envApiToken = process.env.OKTA_API_TOKEN;
 
   const answers = await prompts([
     {
-      type: 'text',
+      type: envOrgUrl ? null : 'text',
       name: 'orgUrl',
       message: 'Okta org URL (e.g. https://dev-123.okta.com):',
       validate: (v: string) => /^https:\/\/.+/.test(v) || 'Must start with https://',
     },
     {
-      type: 'password',
-      name: 'token',
-      message: 'OAuth 2.0 bearer token:',
+      type: envApiToken ? null : 'password',
+      name: 'apiToken',
+      message: 'Okta API token (SSWS):',
       validate: (v: string) => (v ? true : 'Required'),
     },
     {
@@ -71,12 +73,15 @@ async function main() {
     },
   ], { onCancel: () => process.exit(0) });
 
-  if (!answers.orgUrl || !answers.token || !answers.resourceUrl) {
+  const orgUrl = envOrgUrl || answers.orgUrl;
+  const apiToken = envApiToken || answers.apiToken;
+
+  if (!orgUrl || !apiToken || !answers.resourceUrl) {
     console.log(chalk.yellow('\n⚠️  Missing required input. Exiting.\n'));
     process.exit(1);
   }
 
-  const client = new OktaMcpClient({ orgUrl: answers.orgUrl, token: answers.token });
+  const client = new OktaMcpClient({ orgUrl, apiToken });
 
   // --- Register -------------------------------------------------------------
 
@@ -97,7 +102,7 @@ async function main() {
   // --- Persist state early so it can be rolled back even if later steps fail
 
   saveMcpRegisterState({
-    oktaOrgUrl: answers.orgUrl,
+    oktaOrgUrl: orgUrl,
     mcpServerId: mcp.id,
     resourceUrl: mcp.resourceUrl,
     displayName: mcp.metadata?.displayName,

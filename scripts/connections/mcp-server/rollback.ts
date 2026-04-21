@@ -27,11 +27,13 @@ async function main() {
   console.log(chalk.gray(`  resourceUrl: ${state.resourceUrl}`));
   console.log(chalk.gray(`  orgUrl:      ${state.oktaOrgUrl}\n`));
 
+  const envApiToken = process.env.OKTA_API_TOKEN;
+
   const answers = await prompts([
     {
-      type: 'password',
-      name: 'token',
-      message: 'OAuth 2.0 bearer token (mcpServers.manage scope):',
+      type: envApiToken ? null : 'password',
+      name: 'apiToken',
+      message: 'Okta API token (SSWS):',
       validate: (v: string) => (v ? true : 'Required'),
     },
     {
@@ -47,7 +49,13 @@ async function main() {
     process.exit(0);
   }
 
-  const client = new OktaMcpClient({ orgUrl: state.oktaOrgUrl, token: answers.token });
+  const apiToken = envApiToken || answers.apiToken;
+  if (!apiToken) {
+    console.log(chalk.yellow('\n⚠️  Missing API token. Exiting.\n'));
+    process.exit(1);
+  }
+
+  const client = new OktaMcpClient({ orgUrl: state.oktaOrgUrl, apiToken });
 
   // --- Deactivate (tolerate "already INACTIVE") -----------------------------
 
