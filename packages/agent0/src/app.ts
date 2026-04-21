@@ -5,6 +5,7 @@ import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import { getAgentForSession } from './agent.js';
 import { OktaAuthHelper, OktaConfig, createSessionMiddleware } from './auth/okta-auth.js';
+import { buildConnectionStatuses } from './connections/registry.js';
 
 // ============================================================================
 // App Server Configuration Types
@@ -336,6 +337,24 @@ export class AppServer {
       } catch (error: any) {
         console.error('OAuth STS status error:', error);
         res.status(500).json({ configured: false, connected: false, error: error.message });
+      }
+    });
+
+    // Unified connections status: reports all five Okta managed-connection
+    // slots (authorization_server, application, secret, service_account,
+    // mcp_server) so the UI "Connections" panel can render them uniformly.
+    //
+    // Returns env-derived state for the anonymous/logged-out case, and
+    // enriches "connected" flags with per-user runtime state when the
+    // caller has an active session.
+    this.app.get('/api/connections/status', async (req, res) => {
+      try {
+        const agent = await getAgentForSession(req).catch(() => null);
+        const connections = buildConnectionStatuses(agent);
+        res.json({ connections });
+      } catch (error: any) {
+        console.error('Connections status error:', error);
+        res.status(500).json({ error: error.message });
       }
     });
   }
