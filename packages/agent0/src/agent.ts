@@ -1,5 +1,7 @@
 // agent.ts - Agent Identity: MCP Client + LLM Integration
 import path from 'path';
+import { Request } from 'express';
+import * as dotenv from 'dotenv';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import Anthropic from '@anthropic-ai/sdk';
@@ -7,6 +9,7 @@ import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedroc
 import { TokenExchangeHandler, TokenExchangeConfig, parseScopeChallenge } from './connections/authorization-server/handler.js';
 import { OAuthStsHandler, OAuthStsConfig } from './connections/application/handler.js';
 import { GitHubService } from './connections/application/tools/github.js';
+import { isOPAConfigured, fetchLLMCredentialsFromOPA } from './connections/secret/handler.js';
 
 // ============================================================================
 // Scope Challenge Types
@@ -71,11 +74,10 @@ function extractScopeChallenge(source: any): ScopeChallenge | null {
   return null;
 }
 
-import { Request } from 'express';
-import * as dotenv from 'dotenv';
-
 // Load environment variables for agent
 dotenv.config({ path: path.resolve(__dirname, '../.env.agent') });
+// Load OPA configuration (if present)
+dotenv.config({ path: path.resolve(__dirname, '../.env.opa') });
 
 // ============================================================================
 // Agent LLM Configuration Types
@@ -141,11 +143,24 @@ function validateAgentLLMEnv(): AgentLLMConfig {
 
   // Error if neither provider is configured
   if (!hasAnthropicKey && !hasBedrockVars) {
-    console.error('❌ Environment configuration error in .env.agent');
-    console.error('   No LLM provider configured');
-    console.error('   Please configure one LLM provider:');
-    console.error('   - For Anthropic: Set ANTHROPIC_API_KEY and ANTHROPIC_MODEL');
-    console.error('   - For Bedrock: Set AWS_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, BEDROCK_MODEL_ID');
+    console.error('❌ No LLM credentials configured\n');
+    console.error('   You have two options to configure LLM credentials:\n');
+    console.error('   Option 1: Direct Mode (simple, credentials in .env.agent)');
+    console.error('   ─────────────────────────────────────────────────────────');
+    console.error('   For Anthropic:');
+    console.error('     ANTHROPIC_API_KEY=sk-ant-...');
+    console.error('     ANTHROPIC_MODEL=claude-sonnet-4-20250514\n');
+    console.error('   For AWS Bedrock:');
+    console.error('     AWS_REGION=us-east-1');
+    console.error('     AWS_ACCESS_KEY_ID=AKIA...');
+    console.error('     AWS_SECRET_ACCESS_KEY=...');
+    console.error('     BEDROCK_MODEL_ID=anthropic.claude-3-sonnet-20240229-v1:0\n');
+    console.error('   Option 2: OPA Mode (secure, credentials from Okta PAM)');
+    console.error('   ─────────────────────────────────────────────────────────');
+    console.error('   Requires .env.opa with:');
+    console.error('     OPA_LLM_PROVIDER=anthropic');
+    console.error('     OPA_ANTHROPIC_API_KEY_ORN=orn:okta:pam:{orgId}:secrets:{secretId}\n');
+    console.error('   Run: pnpm run setup:opa (then link secrets to agent)\n');
     process.exit(1);
   }
 
@@ -209,8 +224,69 @@ function validateAgentLLMEnv(): AgentLLMConfig {
   }
 }
 
-// Validate and get typed LLM configuration
-const llmConfig = validateAgentLLMEnv();
+// ============================================================================
+// LLM Configuration Initialization
+// ============================================================================
+
+// Module-level state for LLM configuration
+let llmConfig: AgentLLMConfig | null = null;
+let llmConfigInitialized = false;
+let llmConfigSource: 'opa' | 'env' | 'none' = 'none';
+
+/**
+ * Initialize LLM configuration from OPA or environment variables
+ * OPA is tried first if configured, with fallback to env vars
+ */
+export async function initializeLLMConfig(): Promise<void> {
+  if (llmConfigInitialized) {
+    return;
+  }
+
+  console.log('\n Initializing LLM configuration from environment variables...');
+
+  // Note: OPA credentials are now fetched per-user-session in getAgentForUserContext()
+  // This function only handles environment variable fallback
+
+  try {
+    llmConfig = validateAgentLLMEnv();
+    llmConfigSource = 'env';
+    llmConfigInitialized = true;
+    console.log(' LLM credentials loaded from environment variables');
+  } catch (error) {
+    llmConfigInitialized = true;
+    llmConfigSource = 'none';
+    console.error(' No LLM credentials available');
+    throw error;
+  }
+}
+
+/**
+ * Get the current LLM configuration source
+ */
+export function getLLMConfigSource(): 'opa' | 'env' | 'none' {
+  return llmConfigSource;
+}
+
+/**
+ * Check if LLM configuration has been initialized
+ */
+export function isLLMConfigInitialized(): boolean {
+  return llmConfigInitialized;
+}
+
+// Initialize LLM configuration at module load
+// OPA credentials are fetched per-user-session, env vars are loaded at startup
+if (isOPAConfigured()) {
+  // OPA mode: credentials will be fetched per-user via token exchange
+  console.log('🔐 OPA mode enabled - LLM credentials will be fetched per-user session');
+  llmConfigInitialized = true;
+  llmConfigSource = 'opa';
+} else {
+  // Direct mode: validate and load env vars now
+  llmConfig = validateAgentLLMEnv();
+  llmConfigSource = 'env';
+  llmConfigInitialized = true;
+}
 
 // ============================================================================
 // Agent Configuration
@@ -298,11 +374,18 @@ const buildOAuthStsConfig = (): OAuthStsConfig | undefined => {
   return undefined;
 };
 
-// Build agentConfig using validated LLM configuration
-const oauthStsConfig = buildOAuthStsConfig();
+// Build agentConfig dynamically from current LLM configuration.
+// In OPA mode, llmConfig is null at module load (creds are fetched per-user-session),
+// so this returns null and getAgentForUserContext() builds a config from OPA instead.
+function buildAgentConfig(): Omit<AgentConfig, 'idToken' | 'userContext'> | null {
+  if (!llmConfig) {
+    return null;
+  }
 
-const agentConfig: Omit<AgentConfig, 'idToken' | 'userContext'> = llmConfig.llmProvider === 'anthropic'
-  ? {
+  const oauthStsConfig = buildOAuthStsConfig();
+
+  if (llmConfig.llmProvider === 'anthropic') {
+    return {
       mcpServerUrl: llmConfig.mcpServerUrl,
       name: 'agent0',
       version: '1.0.0',
@@ -311,8 +394,9 @@ const agentConfig: Omit<AgentConfig, 'idToken' | 'userContext'> = llmConfig.llmP
       anthropicApiKey: llmConfig.anthropicApiKey,
       anthropicModel: llmConfig.anthropicModel,
       enableLLM: true,
-    }
-  : {
+    };
+  } else {
+    return {
       mcpServerUrl: llmConfig.mcpServerUrl,
       name: 'agent0',
       version: '1.0.0',
@@ -325,8 +409,63 @@ const agentConfig: Omit<AgentConfig, 'idToken' | 'userContext'> = llmConfig.llmP
       bedrockModelId: llmConfig.bedrockModelId,
       enableLLM: true,
     };
+  }
+}
 
-export function getAgentForUserContext(idToken: string, userContext: UserContext): Agent {
+export async function getAgentForUserContext(idToken: string, userContext: UserContext): Promise<Agent> {
+  // OPA mode: fetch credentials via token exchange (per-user-session)
+  if (isOPAConfigured()) {
+    try {
+      const opaCredentials = await fetchLLMCredentialsFromOPA(idToken);
+
+      if (opaCredentials) {
+        const baseConfig = {
+          mcpServerUrl: process.env.MCP_SERVER_URL || '',
+          name: 'agent0',
+          version: '1.0.0',
+          tokenExchange: buildTokenExchangeConfig(),
+          oauthSts: buildOAuthStsConfig(),
+          enableLLM: true,
+          idToken,
+          userContext,
+        };
+
+        let agentConfig: AgentConfig;
+
+        if (opaCredentials.provider === 'anthropic') {
+          agentConfig = {
+            ...baseConfig,
+            anthropicApiKey: opaCredentials.apiKey,
+            anthropicModel: opaCredentials.model,
+          };
+        } else {
+          agentConfig = {
+            ...baseConfig,
+            awsRegion: opaCredentials.awsRegion,
+            awsAccessKeyId: opaCredentials.awsAccessKeyId,
+            awsSecretAccessKey: opaCredentials.awsSecretAccessKey,
+            awsSessionToken: opaCredentials.awsSessionToken,
+            bedrockModelId: opaCredentials.bedrockModelId,
+          };
+        }
+
+        llmConfigSource = 'opa';
+        return new Agent(agentConfig);
+      }
+    } catch (error: any) {
+      console.warn('⚠️  Failed to fetch OPA credentials:', error.message);
+      console.warn('   Falling back to environment variables...');
+    }
+  }
+
+  // Fallback to environment variables
+  await initializeLLMConfig();
+
+  const agentConfig = buildAgentConfig();
+  if (!agentConfig) {
+    throw new Error('LLM configuration not available. Cannot create agent.');
+  }
+
   return new Agent({
     ...agentConfig,
     idToken,
@@ -348,12 +487,12 @@ export async function getAgentForSession (req: Request): Promise<Agent | null> {
   const subject = userInfo.sub;
 
   const existingAgent = subjectToAgent.get(subject);
-  
+
   if (existingAgent) {
     return existingAgent;
   }
 
-  const agent = getAgentForUserContext(
+  const agent = await getAgentForUserContext(
     idToken, userInfo
   );
 

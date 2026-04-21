@@ -9,10 +9,6 @@ import { randomUUID } from 'crypto';
 import jwt from 'jsonwebtoken';
 import axios from 'axios';
 
-// Debug mode for verbose auth logging - OFF by default for security
-// Set AUTH_DEBUG=true to enable detailed logging (includes sensitive data)
-const AUTH_DEBUG = process.env.AUTH_DEBUG === 'true';
-
 // ============================================================================
 // Scope Challenge Types and Parser (MCP Authorization Best Practices)
 // ============================================================================
@@ -151,12 +147,6 @@ export class TokenExchangeHandler {
     formData.append('client_assertion_type', 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer');
     formData.append('client_assertion', clientAssertion);
 
-    const requestedScopes = scopes || this.config.agentScopes;
-    console.log(`🔄 Step 1: Exchanging ID token for ID-JAG token...`);
-    console.log(`🎯 Requested scopes: ${requestedScopes}`);
-    console.log(`📍 Audience: ${this.config.authorizationServer}`);
-    console.log(`🆔 Client ID: ${this.config.clientId}`);
-
     const response = await axios.post(
       `https://${this.config.oktaDomain}/oauth2/v1/token`,
       formData,
@@ -167,10 +157,87 @@ export class TokenExchangeHandler {
       }
     );
 
-    console.log(`✅ ID-JAG token obtained`);
-    console.log(`🎯 Issued token type: ${response.data.issued_token_type}`);
-
     return response.data.access_token; // This is actually the ID-JAG token
+  }
+
+  // ============================================================================
+  // Exchange ID Token for Vaulted Secret (PAM)
+  // ============================================================================
+
+  /**
+   * Exchange ID token for a vaulted secret from Okta PAM
+   * @param idToken - The user's ID token
+   * @param resourceOrn - The ORN of the secret (e.g., orn:okta:pam:{orgId}:secrets:{secretId})
+   * @param secretName - Optional name for logging purposes
+   * @returns The secret value
+   */
+  async exchangeIdTokenForVaultedSecret(
+    idToken: string,
+    resourceOrn: string,
+    secretName?: string
+  ): Promise<string> {
+    if (!this.privateKey) {
+      throw new Error('Private key not loaded for token exchange');
+    }
+
+    const tokenEndpoint = `https://${this.config.oktaDomain}/oauth2/v1/token`;
+    const clientAssertion = this.createClientAssertion(tokenEndpoint);
+
+    const formData = new URLSearchParams();
+    formData.append('grant_type', 'urn:ietf:params:oauth:grant-type:token-exchange');
+    formData.append('requested_token_type', 'urn:okta:params:oauth:token-type:vaulted-secret');
+    formData.append('subject_token', idToken);
+    formData.append('subject_token_type', 'urn:ietf:params:oauth:token-type:id_token');
+    formData.append('resource', resourceOrn);
+    formData.append('client_assertion_type', 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer');
+    formData.append('client_assertion', clientAssertion);
+
+    try {
+      const response = await axios.post(tokenEndpoint, formData, {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+      });
+
+      // Extract the actual secret value from the response
+      const vaultedSecret = response.data.vaulted_secret;
+      let secretValue: string;
+
+      if (typeof vaultedSecret === 'string') {
+        secretValue = vaultedSecret;
+      } else if (typeof vaultedSecret === 'object' && vaultedSecret !== null) {
+        // Try common key names for secrets
+        secretValue = vaultedSecret.secret
+          || vaultedSecret.password
+          || vaultedSecret.api_key
+          || vaultedSecret.apiKey
+          || vaultedSecret.token
+          || vaultedSecret.value
+          || Object.values(vaultedSecret)[0] as string;
+      } else {
+        throw new Error(`Invalid secret format received for ${secretName || resourceOrn}`);
+      }
+
+      // Validate non-empty
+      if (!secretValue || (typeof secretValue === 'string' && secretValue.trim() === '')) {
+        throw new Error(`Empty secret value received for ${secretName || resourceOrn}`);
+      }
+
+      return secretValue;
+    } catch (error: any) {
+      const errorData = error.response?.data;
+      console.error(`❌ Failed to retrieve secret${secretName ? ` (${secretName})` : ''}:`, errorData || error.message);
+
+      if (errorData?.error === 'invalid_grant') {
+        throw new Error(`Secret access denied: ${errorData.error_description || 'Invalid grant'}`);
+      } else if (errorData?.error === 'invalid_target') {
+        throw new Error(`Invalid secret resource: ${resourceOrn}`);
+      }
+
+      throw new Error(
+        `Failed to retrieve vaulted secret: ${errorData?.error_description || error.message}`
+      );
+    }
   }
 
   // ============================================================================
@@ -185,9 +252,6 @@ export class TokenExchangeHandler {
   }> {
     const authorizationServer = this.config.authorizationServer;
     const authorizationServerTokenEndpoint = this.config.authorizationServerTokenEndpoint;
-
-    console.log(`🔄 Step 2: Exchanging ID-JAG for Access Token at Resource Server...`);
-    console.log(`📍 MCP authorization server: ${authorizationServer}`);
 
     const clientAssertion = this.createClientAssertion(authorizationServerTokenEndpoint);
 
@@ -206,10 +270,6 @@ export class TokenExchangeHandler {
         },
       }
     );
-
-    console.log(`✅ Access Token obtained from Resource Server`);
-    console.log(`🎯 Token type: ${response.data.token_type}`);
-    console.log(`⏰ Expires in: ${response.data.expires_in}s`);
 
     return response.data;
   }
@@ -238,14 +298,6 @@ export class TokenExchangeHandler {
       throw new Error('Cross-app access not configured properly. Private key not loaded.');
     }
 
-    // Only log tokens in debug mode - contains sensitive credentials
-    if (AUTH_DEBUG) {
-      console.log(`👻 Subject token: ${idToken}`);
-    }
-    if (requestedScopes) {
-      console.log(`🔄 Step-up authorization requested with scopes: ${requestedScopes}`);
-    }
-
     try {
       // Step 1: Exchange ID token for ID-JAG
       const idJag = await this.exchangeIdTokenForIdJag(idToken, requestedScopes);
@@ -256,8 +308,6 @@ export class TokenExchangeHandler {
 
         // Return the access token
         const accessToken = accessTokenResponse.access_token;
-        console.log('✅ Access token obtained successfully');
-        console.log('💡 Token can be used for MCP tool calls');
 
         return {
           success: true,
