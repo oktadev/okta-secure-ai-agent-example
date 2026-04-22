@@ -604,13 +604,25 @@ async function processMessage(message) {
             const result = await response.json();
             
             if (result.success) {
-                // Check if OAuth STS interaction is required
+                // Check if OAuth STS interaction is required (legacy single-resource path,
+                // used by the OIN GitHub integration).
                 if (result.data && result.data.interaction_required) {
                     pendingMessage = message;
                     showConsentPrompt(
                         result.data.interaction_uri,
-                        result.message || 'GitHub authorization required.'
+                        result.message || 'GitHub authorization required.',
+                        null // resource unspecified -> legacy OIN handler
                     );
+                    return;
+                }
+
+                // Multi-MCP path: Agent.connect() reported one or more MCPs with
+                // OAuth-STS consent pending. Queue popups sequentially — finish
+                // consent N before prompting for N+1. The original message is
+                // replayed only after all pendings clear.
+                if (result.data && Array.isArray(result.data.pending_consents) && result.data.pending_consents.length > 0) {
+                    pendingMessage = message;
+                    enqueuePendingConsents(result.data.pending_consents);
                     return;
                 }
 
@@ -782,11 +794,41 @@ async function callTool(toolName, args = {}) {
 // OAuth STS Consent Flow
 // ============================================================================
 
-function showConsentPrompt(interactionUri, message) {
+// Queue of pending consents from the last chat response. Each entry is
+// {mcpId, resource, interactionUri, message}. Drained sequentially — the
+// current popup must finish before we prompt for the next resource.
+let pendingConsentQueue = [];
+
+function enqueuePendingConsents(entries) {
+    pendingConsentQueue = entries.slice();
+    dequeueNextConsent();
+}
+
+function dequeueNextConsent() {
+    if (pendingConsentQueue.length === 0) {
+        // All consents cleared — replay the original chat message.
+        if (pendingMessage) {
+            const msg = pendingMessage;
+            pendingMessage = null;
+            processMessage(msg);
+        }
+        return;
+    }
+    const entry = pendingConsentQueue.shift();
+    showConsentPrompt(
+        entry.interactionUri,
+        entry.message || `Authorization required for ${entry.resource}.`,
+        entry.resource
+    );
+}
+
+function showConsentPrompt(interactionUri, message, resource) {
     hideTypingIndicator();
 
     const consentDiv = document.createElement('div');
     consentDiv.className = 'message assistant consent-message';
+    // Stash resource on the DOM node so retry/backoff can thread it.
+    if (resource) consentDiv.dataset.resource = resource;
 
     const contentDiv = document.createElement('div');
     contentDiv.className = 'message-content';
@@ -795,7 +837,7 @@ function showConsentPrompt(interactionUri, message) {
         <div class="consent-prompt">
             <p><strong>🔗 ${escapeHtml(message)}</strong></p>
             <p>A popup will open for authorization. After you authorize, the agent will automatically continue.</p>
-            <button class="consent-retry-button" onclick="openConsentPopup('${escapeHtml(interactionUri)}', this)">Authorize GitHub Access</button>
+            <button class="consent-retry-button" onclick="openConsentPopup('${escapeHtml(interactionUri)}', this)">Authorize Access</button>
             <span class="consent-status"></span>
         </div>
     `;
@@ -853,6 +895,9 @@ async function retryOAuthStsWithBackoff(button) {
     // Replace consent prompt with a progress indicator
     const consentMsg = button.closest('.consent-message');
     const contentDiv = consentMsg ? consentMsg.querySelector('.message-content') : null;
+    // Multi-MCP: target the specific resource stashed on the consent-message node.
+    // Absent -> backend uses the legacy OIN handler.
+    const resource = consentMsg && consentMsg.dataset.resource ? consentMsg.dataset.resource : null;
     if (contentDiv) {
         contentDiv.innerHTML = `
             <div class="consent-progress">
@@ -881,6 +926,7 @@ async function retryOAuthStsWithBackoff(button) {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 credentials: 'include',
+                body: JSON.stringify(resource ? { resource } : {}),
             });
 
             const result = await response.json();
@@ -891,21 +937,25 @@ async function retryOAuthStsWithBackoff(button) {
                     contentDiv.innerHTML = `
                         <div class="consent-progress">
                             <span style="font-size: 1.5rem;">&#x2705;</span>
-                            <p class="consent-progress-text">GitHub connected!</p>
+                            <p class="consent-progress-text">Connected!</p>
                         </div>
                     `;
                 }
 
-                updateGitHubStatus(true);
+                // Legacy OIN path toggles the GitHub status pill.
+                if (!resource) updateGitHubStatus(true);
 
                 // Brief pause to show success state, then clean up and continue
                 await new Promise(resolve => setTimeout(resolve, 1000));
                 if (consentMsg) consentMsg.remove();
 
-                addMessage('GitHub connected successfully!', 'system');
+                addMessage(resource ? `Connected to ${resource}.` : 'GitHub connected successfully!', 'system');
 
-                // Re-send the original message
-                if (pendingMessage) {
+                // Multi-MCP queue: if there are more pending consents, prompt
+                // for the next one. Otherwise replay the original chat message.
+                if (pendingConsentQueue.length > 0) {
+                    dequeueNextConsent();
+                } else if (pendingMessage) {
                     const msg = pendingMessage;
                     pendingMessage = null;
                     await processMessage(msg);
@@ -949,26 +999,31 @@ async function retryOAuthStsWithBackoff(button) {
 async function retryOAuthStsExchange(button) {
     button.disabled = true;
     button.textContent = 'Retrying...';
+    const consentMsg = button.closest('.consent-message');
+    const resource = consentMsg && consentMsg.dataset.resource ? consentMsg.dataset.resource : null;
 
     try {
         const response = await fetch(`${API_BASE_URL}/api/oauth-sts/exchange`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
+            body: JSON.stringify(resource ? { resource } : {}),
         });
 
         const result = await response.json();
 
         if (result.status === 'success') {
             // Remove the consent prompt
-            const consentMsg = button.closest('.consent-message');
             if (consentMsg) consentMsg.remove();
 
-            addMessage('GitHub connected successfully!', 'system');
-            updateGitHubStatus(true);
+            addMessage(resource ? `Connected to ${resource}.` : 'GitHub connected successfully!', 'system');
+            if (!resource) updateGitHubStatus(true);
 
-            // Re-send the original message
-            if (pendingMessage) {
+            // Drain any remaining queued consents first; otherwise replay the
+            // original chat message.
+            if (pendingConsentQueue.length > 0) {
+                dequeueNextConsent();
+            } else if (pendingMessage) {
                 const msg = pendingMessage;
                 pendingMessage = null;
                 await processMessage(msg);

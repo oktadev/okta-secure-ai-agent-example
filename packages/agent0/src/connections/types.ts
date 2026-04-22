@@ -29,6 +29,7 @@ export interface ConnectionStatus {
   kind: ConnectionKind;
   configured: boolean;   // required env vars are set
   connected: boolean;    // handler currently holds a usable token / credential
+  disabled?: boolean;    // opted out via DISABLED_CONNECTIONS env var
   details?: Record<string, unknown>;
 }
 
