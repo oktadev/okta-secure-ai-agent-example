@@ -238,17 +238,22 @@ export class OktaAuthHelper {
   // Logout Handler
   // ============================================================================
 
-  handleLogout(port: number) {
+  handleLogout(_port: number) {
     return async (req: Request, res: Response) => {
       try {
         const client = await this.getClient();
         const idToken = (req.session as any)?.idToken;
 
+        // Derive post-logout URL from the registered redirect URI's origin so
+        // it matches the public-facing origin (e.g., the Vite dev server port),
+        // not the backend's internal port.
+        const postLogoutRedirectUri = new URL(this.config.redirectUri).origin;
+
         // Build end session URL using openid-client with client_id parameter
         const logoutUrl = client.endSessionUrl({
           client_id: this.config.clientId,
           id_token_hint: idToken,
-          post_logout_redirect_uri: `http://localhost:${port}`,
+          post_logout_redirect_uri: postLogoutRedirectUri,
         });
 
         req.session.destroy((err) => {

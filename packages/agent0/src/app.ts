@@ -162,9 +162,11 @@ export class AppServer {
       contentSecurityPolicy: {
         directives: {
           defaultSrc: ["'self'"],
-          scriptSrc: ["'self'", "https://cdn.jsdelivr.net"],
-          styleSrc: ["'self'", "'unsafe-inline'"],
-          connectSrc: ["'self'", "http://localhost:3000", "http://127.0.0.1:3000"],
+          scriptSrc: ["'self'", 'https://cdn.jsdelivr.net'],
+          styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+          fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
+          connectSrc: ["'self'"],
+          imgSrc: ["'self'", 'data:', 'https:'],
         },
       },
     }));
@@ -185,9 +187,8 @@ export class AppServer {
       }
     });
 
-    // Serve static files (web UI)
-    const publicPath = path.join(__dirname, '..', 'public');
-    this.app.use(express.static(publicPath));
+    // Serve static files from public directory
+    this.app.use(express.static(path.join(__dirname, '..', 'public')));
   }
 
   // ============================================================================
