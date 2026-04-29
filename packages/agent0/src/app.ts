@@ -5,6 +5,7 @@ import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import { getAgentForSession } from './agent.js';
 import { OktaAuthHelper, OktaConfig, createSessionMiddleware } from './auth/okta-auth.js';
+import { buildConnectionStatuses } from './connections/registry.js';
 
 // ============================================================================
 // App Server Configuration Types
@@ -161,9 +162,15 @@ export class AppServer {
       contentSecurityPolicy: {
         directives: {
           defaultSrc: ["'self'"],
-          scriptSrc: ["'self'", "https://cdn.jsdelivr.net"],
-          styleSrc: ["'self'", "'unsafe-inline'"],
-          connectSrc: ["'self'", "http://localhost:3000", "http://127.0.0.1:3000"],
+          scriptSrc: ["'self'", 'https://cdn.jsdelivr.net'],
+          styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+          fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
+          // api.iconify.design: runtime SVG fetch for the <iconify-icon> web
+          //   component used in the Managed Connections panel.
+          // cdn.jsdelivr.net: DevTools sourcemap fetches for the CDN scripts
+          //   already allowed in scriptSrc (dompurify, marked, iconify).
+          connectSrc: ["'self'", 'https://api.iconify.design', 'https://cdn.jsdelivr.net'],
+          imgSrc: ["'self'", 'data:', 'https:'],
         },
       },
     }));
@@ -184,9 +191,8 @@ export class AppServer {
       }
     });
 
-    // Serve static files (web UI)
-    const publicPath = path.join(__dirname, '..', 'public');
-    this.app.use(express.static(publicPath));
+    // Serve static files from public directory
+    this.app.use(express.static(path.join(__dirname, '..', 'public')));
   }
 
   // ============================================================================
@@ -273,9 +279,18 @@ export class AppServer {
           });
         }
 
-        // Process message with agent
+        // Process message with agent. If connect() produced pending OAuth-STS
+        // consents (e.g. GitHub MCP first-use), surface them so the frontend
+        // can open consent popups; the LLM still runs with whichever MCP
+        // tools did connect successfully.
         const result = await agent.processUserInput(message);
-        res.json(result);
+        const pendingConsents = agent.consumePendingConsents();
+        if (pendingConsents.length > 0) {
+          const data = { ...(result.data || {}), pending_consents: pendingConsents };
+          res.json({ ...result, data });
+        } else {
+          res.json(result);
+        }
       } catch (error: any) {
         console.error('Chat API error:', error);
         res.status(500).json({
@@ -296,7 +311,10 @@ export class AppServer {
       ? this.oktaAuthHelper.requireAuth()
       : (_req: Request, _res: Response, next: any) => next();
 
-    // Trigger OAuth STS exchange (called after user completes consent)
+    // Trigger OAuth STS exchange (called after user completes consent).
+    // Optional body field `resource` lets callers target a specific
+    // OAuth-STS handler (OIN GitHub, GitHub MCP, ...). Absent `resource`
+    // falls back to the legacy OIN handler for backward compatibility.
     this.app.post('/api/oauth-sts/exchange', authMiddleware, async (req, res) => {
       try {
         const agent = await getAgentForSession(req);
@@ -304,13 +322,37 @@ export class AppServer {
           return res.status(503).json({ status: 'error', error: 'Agent not available' });
         }
 
-        const stsHandler = agent.getOAuthStsHandler();
+        const resource: string | undefined = req.body?.resource;
+        const stsHandler = resource
+          ? agent.getOAuthStsHandlerByResource(resource)
+          : agent.getOAuthStsHandler();
+
         if (!stsHandler) {
-          return res.status(404).json({ status: 'error', error: 'OAuth STS not configured' });
+          return res.status(404).json({
+            status: 'error',
+            error: resource
+              ? `No OAuth STS handler registered for resource="${resource}"`
+              : 'OAuth STS not configured',
+          });
         }
 
         const idToken = agent.getIdToken();
         const result = await stsHandler.exchangeForISVToken(idToken);
+
+        // If this exchange just unblocked an MCP, reconnect it so its tools
+        // join the union. We can't rely on getPendingConsents() here — /api/chat
+        // already drained it via consumePendingConsents(). Instead match by
+        // resource against the live MCP list.
+        if (resource && result.status === 'success') {
+          const owner = agent
+            .listOAuthStsResources()
+            .find(r => r.scope === 'mcp' && r.resource === resource);
+          if (owner?.mcpId) {
+            const outcome = await agent.retryPendingMcp(owner.mcpId);
+            console.log(`   retryPendingMcp[${owner.mcpId}] -> ${outcome}`);
+          }
+        }
+
         res.json(result);
       } catch (error: any) {
         console.error('OAuth STS exchange error:', error);
@@ -318,24 +360,47 @@ export class AppServer {
       }
     });
 
-    // Check OAuth STS connection status
+    // Check OAuth STS connection status. Optional `?resource=` query
+    // targets a specific handler; default = legacy OIN handler.
     this.app.get('/api/oauth-sts/status', authMiddleware, async (req, res) => {
       try {
         const agent = await getAgentForSession(req);
-        if (!agent || !agent.isOAuthStsConfigured()) {
+        if (!agent) {
           return res.json({ configured: false, connected: false });
         }
 
-        const stsHandler = agent.getOAuthStsHandler();
-        const hasToken = stsHandler ? stsHandler.getCachedToken() !== null : false;
+        const resource = typeof req.query.resource === 'string' ? req.query.resource : undefined;
+        const stsHandler = resource
+          ? agent.getOAuthStsHandlerByResource(resource)
+          : agent.getOAuthStsHandler();
 
-        res.json({
-          configured: true,
-          connected: hasToken,
-        });
+        if (!stsHandler) {
+          return res.json({ configured: false, connected: false });
+        }
+
+        const hasToken = stsHandler.getCachedToken() !== null;
+        res.json({ configured: true, connected: hasToken, resource });
       } catch (error: any) {
         console.error('OAuth STS status error:', error);
         res.status(500).json({ configured: false, connected: false, error: error.message });
+      }
+    });
+
+    // Unified connections status: reports the Okta managed-connection
+    // slots this sample supports (authorization_server, application,
+    // mcp_server) so the UI "Connections" panel can render them uniformly.
+    //
+    // Returns env-derived state for the anonymous/logged-out case, and
+    // enriches "connected" flags with per-user runtime state when the
+    // caller has an active session.
+    this.app.get('/api/connections/status', async (req, res) => {
+      try {
+        const agent = await getAgentForSession(req).catch(() => null);
+        const connections = buildConnectionStatuses(agent);
+        res.json({ connections });
+      } catch (error: any) {
+        console.error('Connections status error:', error);
+        res.status(500).json({ error: error.message });
       }
     });
   }

@@ -1,4 +1,7 @@
-// oauth-sts.ts - OAuth STS Brokered Consent Token Exchange
+// connections/application/handler.ts - OAuth STS Brokered Consent Token Exchange
+//
+// Connection type: "Application" in Okta's Add-connection UI.
+// Flow: ID token -> Okta STS exchange (brokered consent) -> ISV access token.
 import * as fs from 'fs';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
@@ -38,6 +41,13 @@ export class OAuthStsHandler {
   private cachedAccessToken: string | null = null;
   private cachedTokenExpiry: number = 0;
 
+  // "Has the user ever successfully authorized this resource?" The in-memory
+  // access-token cache comes and goes with the `expires_in` TTL; this flag
+  // persists beyond that so the UI can show the Application connection as
+  // Live across token-refresh gaps. Reset only on explicit revoke
+  // (clearCachedToken) or on process restart — both reset the cache too.
+  private hasEverSucceeded: boolean = false;
+
   constructor(config: OAuthStsConfig) {
     this.config = config;
     this.loadPrivateKey();
@@ -45,7 +55,9 @@ export class OAuthStsHandler {
 
   private loadPrivateKey(): void {
     try {
-      const privateKeyPath = path.resolve(__dirname, '../..', this.config.privateKeyFile);
+      // __dirname at runtime: dist/connections/application
+      // -> package root (three levels up) holds the .pem referenced by AI_AGENT_PRIVATE_KEY_FILE
+      const privateKeyPath = path.resolve(__dirname, '../../..', this.config.privateKeyFile);
       this.privateKey = fs.readFileSync(privateKeyPath, 'utf8');
       console.log('🔑 Private key loaded for OAuth STS exchange');
     } catch (error: any) {
@@ -92,9 +104,21 @@ export class OAuthStsHandler {
     return null;
   }
 
+  /**
+   * True once any exchange has returned an access token for this handler's
+   * resource. Survives token expiry — use this for UI "connected" state;
+   * use getCachedToken() when you actually need a bearer token.
+   */
+  isAuthorized(): boolean {
+    return this.hasEverSucceeded;
+  }
+
   clearCachedToken(): void {
     this.cachedAccessToken = null;
     this.cachedTokenExpiry = 0;
+    // Explicit clear = revoke. Drop the "ever succeeded" flag too so the UI
+    // flips back to Idle.
+    this.hasEverSucceeded = false;
   }
 
   // ============================================================================
@@ -147,6 +171,7 @@ export class OAuthStsHandler {
       this.cachedAccessToken = access_token;
       // Cache with 60s buffer before actual expiry
       this.cachedTokenExpiry = Date.now() + (expires_in - 60) * 1000;
+      this.hasEverSucceeded = true;
 
       console.log('✅ OAuth STS: ISV access token obtained');
       console.log(`⏰ Expires in: ${expires_in}s`);

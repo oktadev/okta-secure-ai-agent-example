@@ -13,6 +13,7 @@ import {
   writeEnvFile,
   writeConfigReport,
   BootstrapConfig,
+  LLMConfig,
 } from './lib/env-writer.js';
 import {
   loadRollbackState,
@@ -302,9 +303,10 @@ async function bootstrap() {
         spinner.succeed(`Agent owners set using Standard API (owner: ${currentUser.login})`);
       }
 
-      // Save owner setup method to rollback state
+      // Save owner setup method and org ID to rollback state
       rollbackState = updateRollbackState(rollbackState, {
         agentOwnerSetupMethod: config.ownerSetupMethod,
+        orgId: orgMetadata.id,
       });
     } catch (error: any) {
       spinner.fail(`Agent owner setup failed: ${error.message}`);
@@ -453,8 +455,112 @@ async function bootstrap() {
       spinner.succeed(`Trusted origins configured (${createdOrigins.length} created, ${origins.length - createdOrigins.length} already existed)`);
     }
 
-    // Step 13: Generate Configuration Files
-    console.log(chalk.bold('\n📋 Step 13: Generating Configuration Files'));
+    // Step 13: Configure LLM Credentials
+    console.log(chalk.bold('\n📋 Step 13: Configure LLM Credentials'));
+
+    const llmModeAnswer = await prompts({
+      type: 'select',
+      name: 'mode',
+      message: 'How would you like to configure LLM credentials?',
+      choices: [
+        {
+          title: 'Environment Variables (Simple)',
+          value: 'env',
+          description: 'Store API key in .env.agent file',
+        },
+        {
+          title: 'Skip (Manual Setup)',
+          value: 'skip',
+          description: 'Configure .env.agent later',
+        },
+      ],
+      initial: 0,
+    });
+
+    let llmConfig: LLMConfig = { provider: 'skip' };
+
+    if (llmModeAnswer.mode === 'env') {
+      // Direct environment variable mode
+      const providerAnswer = await prompts({
+        type: 'select',
+        name: 'provider',
+        message: 'Which LLM provider?',
+        choices: [
+          { title: 'Anthropic (Claude)', value: 'anthropic' },
+          { title: 'AWS Bedrock', value: 'bedrock' },
+        ],
+      });
+
+      if (providerAnswer.provider === 'anthropic') {
+        const anthropicAnswers = await prompts([
+          {
+            type: 'password',
+            name: 'apiKey',
+            message: 'Anthropic API Key:',
+            validate: (v) => (v && v.startsWith('sk-ant-')) || 'API key must start with sk-ant-',
+          },
+          {
+            type: 'text',
+            name: 'model',
+            message: 'Model ID:',
+            initial: 'claude-sonnet-4-20250514',
+          },
+        ]);
+
+        llmConfig = {
+          provider: 'anthropic',
+          apiKey: anthropicAnswers.apiKey,
+          model: anthropicAnswers.model,
+        };
+      } else if (providerAnswer.provider === 'bedrock') {
+        const bedrockAnswers = await prompts([
+          {
+            type: 'text',
+            name: 'region',
+            message: 'AWS Region:',
+            initial: 'us-east-1',
+          },
+          {
+            type: 'password',
+            name: 'accessKeyId',
+            message: 'AWS Access Key ID:',
+            validate: (v) => !!v || 'Required',
+          },
+          {
+            type: 'password',
+            name: 'secretAccessKey',
+            message: 'AWS Secret Access Key:',
+            validate: (v) => !!v || 'Required',
+          },
+          {
+            type: 'password',
+            name: 'sessionToken',
+            message: 'AWS Session Token (optional, press Enter to skip):',
+          },
+          {
+            type: 'text',
+            name: 'modelId',
+            message: 'Bedrock Model ID:',
+            initial: 'anthropic.claude-3-sonnet-20240229-v1:0',
+          },
+        ]);
+
+        llmConfig = {
+          provider: 'bedrock',
+          region: bedrockAnswers.region,
+          accessKeyId: bedrockAnswers.accessKeyId,
+          secretAccessKey: bedrockAnswers.secretAccessKey,
+          sessionToken: bedrockAnswers.sessionToken || undefined,
+          modelId: bedrockAnswers.modelId,
+        };
+      }
+    }
+
+    // Store LLM config for env generation
+    bootstrapConfig.llmConfig = llmConfig;
+
+    // Step 14: Generate Configuration Files
+    console.log(chalk.bold('\n📋 Step 14: Generating Configuration Files'));
     spinner = ora('Writing .env files...').start();
 
     const agent0AppEnv = generateAgent0AppEnv(bootstrapConfig as BootstrapConfig);
@@ -479,11 +585,11 @@ async function bootstrap() {
     console.log('Next steps:');
     console.log(`  1. ${chalk.cyan('pnpm install')} - Install dependencies`);
     console.log(`  2. ${chalk.cyan('pnpm run build')} - Build and bootstrap database`);
-    console.log(`  3. ${chalk.cyan('pnpm run dev')} - Start all services together`);
-    console.log(`\n  Or run in separate terminals:`);
-    console.log(`     ${chalk.cyan('pnpm run start:todo0')} - Start REST API`);
-    console.log(`     ${chalk.cyan('pnpm run start:mcp')} - Start MCP Server`);
-    console.log(`     ${chalk.cyan('pnpm run start:agent0')} - Start Agent`);
+    console.log(`  3. ${chalk.cyan('pnpm run dev')} - Start all services`);
+
+    if (llmConfig.provider === 'skip') {
+      console.log(chalk.yellow('\n  ⚠️  Remember to configure LLM credentials in .env.agent'));
+    }
     console.log(`\n  Optional: ${chalk.cyan('pnpm run validate:okta')} - Validate configuration`);
     console.log(`\n📄 See ${chalk.cyan('okta-config-report.md')} for detailed configuration\n`);
   } catch (error: any) {

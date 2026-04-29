@@ -379,9 +379,13 @@ async function bootstrap(): Promise<void> {
   /**
    * MCP Protected Resource Metadata Endpoint
    */
+  const resourceServerUrl = new URL(
+    process.env.MCP_RESOURCE_INDICATOR || `http://localhost:${config.mcpPort}/mcp`
+  );
+
   app.use(mcpAuthMetadataRouter({
     oauthMetadata: mcpAuthMetadata,
-    resourceServerUrl: new URL(`http://localhost:${config.mcpPort}/mcp`)
+    resourceServerUrl
   }));
 
   // MCP POST endpoint - handles initialization and subsequent requests
@@ -547,7 +551,7 @@ async function bootstrap(): Promise<void> {
     console.log(`  - POST: Initialize/Send messages`);
     console.log(`  - GET:  SSE stream (server→client)`);
     console.log(`  - DELETE: Terminate session`);
-    console.log(`✓ MCP protected resource metadata: ${getOAuthProtectedResourceMetadataUrl(new URL(`http://localhost:${config.mcpPort}/mcp`))}`);
+    console.log(`✓ MCP protected resource metadata: ${getOAuthProtectedResourceMetadataUrl(resourceServerUrl)}`);
     console.log('='.repeat(60));
     console.log('Configuration:');
     console.log(`  - Transport: StreamableHTTP (no SSE-only mode)`);

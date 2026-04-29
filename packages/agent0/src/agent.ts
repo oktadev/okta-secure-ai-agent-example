@@ -1,12 +1,22 @@
 // agent.ts - Agent Identity: MCP Client + LLM Integration
 import path from 'path';
+import { Request } from 'express';
+import * as dotenv from 'dotenv';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import Anthropic from '@anthropic-ai/sdk';
 import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
-import { TokenExchangeHandler, TokenExchangeConfig, parseScopeChallenge } from './auth/token-exchange.js';
-import { OAuthStsHandler, OAuthStsConfig } from './auth/oauth-sts.js';
-import { GitHubService } from './github/github-service.js';
+import { TokenExchangeHandler, TokenExchangeConfig, parseScopeChallenge } from './connections/authorization-server/handler.js';
+import { OAuthStsHandler, OAuthStsConfig } from './connections/application/handler.js';
+import { GitHubService } from './connections/application/tools/github.js';
+import { isConnectionDisabled } from './connections/config.js';
+import {
+  AuthStrategy,
+  IdJagAuthStrategy,
+  McpConnectionConfig,
+  buildAuthStrategy,
+  loadMcpConnectionConfigs,
+} from './connections/auth-strategy.js';
 
 // ============================================================================
 // Scope Challenge Types
@@ -70,9 +80,6 @@ function extractScopeChallenge(source: any): ScopeChallenge | null {
 
   return null;
 }
-
-import { Request } from 'express';
-import * as dotenv from 'dotenv';
 
 // Load environment variables for agent
 dotenv.config({ path: path.resolve(__dirname, '../.env.agent') });
@@ -141,11 +148,17 @@ function validateAgentLLMEnv(): AgentLLMConfig {
 
   // Error if neither provider is configured
   if (!hasAnthropicKey && !hasBedrockVars) {
-    console.error('❌ Environment configuration error in .env.agent');
-    console.error('   No LLM provider configured');
-    console.error('   Please configure one LLM provider:');
-    console.error('   - For Anthropic: Set ANTHROPIC_API_KEY and ANTHROPIC_MODEL');
-    console.error('   - For Bedrock: Set AWS_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, BEDROCK_MODEL_ID');
+    console.error('❌ No LLM credentials configured\n');
+    console.error('   Configure one of the following in .env.agent:\n');
+    console.error('   ─────────────────────────────────────────────────────────');
+    console.error('   For Anthropic:');
+    console.error('     ANTHROPIC_API_KEY=sk-ant-...');
+    console.error('     ANTHROPIC_MODEL=claude-sonnet-4-20250514\n');
+    console.error('   For AWS Bedrock:');
+    console.error('     AWS_REGION=us-east-1');
+    console.error('     AWS_ACCESS_KEY_ID=AKIA...');
+    console.error('     AWS_SECRET_ACCESS_KEY=...');
+    console.error('     BEDROCK_MODEL_ID=anthropic.claude-3-sonnet-20240229-v1:0\n');
     process.exit(1);
   }
 
@@ -209,8 +222,56 @@ function validateAgentLLMEnv(): AgentLLMConfig {
   }
 }
 
-// Validate and get typed LLM configuration
-const llmConfig = validateAgentLLMEnv();
+// ============================================================================
+// LLM Configuration Initialization
+// ============================================================================
+
+// Module-level state for LLM configuration
+let llmConfig: AgentLLMConfig | null = null;
+let llmConfigInitialized = false;
+let llmConfigSource: 'env' | 'none' = 'none';
+
+/**
+ * Initialize LLM configuration from environment variables.
+ */
+export async function initializeLLMConfig(): Promise<void> {
+  if (llmConfigInitialized) {
+    return;
+  }
+
+  console.log('\n Initializing LLM configuration from environment variables...');
+
+  try {
+    llmConfig = validateAgentLLMEnv();
+    llmConfigSource = 'env';
+    llmConfigInitialized = true;
+    console.log(' LLM credentials loaded from environment variables');
+  } catch (error) {
+    llmConfigInitialized = true;
+    llmConfigSource = 'none';
+    console.error(' No LLM credentials available');
+    throw error;
+  }
+}
+
+/**
+ * Get the current LLM configuration source
+ */
+export function getLLMConfigSource(): 'env' | 'none' {
+  return llmConfigSource;
+}
+
+/**
+ * Check if LLM configuration has been initialized
+ */
+export function isLLMConfigInitialized(): boolean {
+  return llmConfigInitialized;
+}
+
+// Initialize LLM configuration at module load from environment variables.
+llmConfig = validateAgentLLMEnv();
+llmConfigSource = 'env';
+llmConfigInitialized = true;
 
 // ============================================================================
 // Agent Configuration
@@ -251,6 +312,7 @@ export interface UserContext {
 
 // Build TokenExchangeConfig from environment variables
 const buildTokenExchangeConfig = (): TokenExchangeConfig | undefined => {
+  if (isConnectionDisabled('authorization_server')) return undefined;
   const mcpAuthServer = process.env.MCP_AUTHORIZATION_SERVER;
   const mcpAuthServerTokenEndpoint = process.env.MCP_AUTHORIZATION_SERVER_TOKEN_ENDPOINT;
   const oktaDomain = process.env.OKTA_DOMAIN;
@@ -275,6 +337,7 @@ const buildTokenExchangeConfig = (): TokenExchangeConfig | undefined => {
 
 // Build OAuthStsConfig from environment variables
 const buildOAuthStsConfig = (): OAuthStsConfig | undefined => {
+  if (isConnectionDisabled('application')) return undefined;
   const oktaDomain = process.env.OKTA_DOMAIN;
   const agentId = process.env.AI_AGENT_ID;
   const privateKeyFile = process.env.AI_AGENT_PRIVATE_KEY_FILE;
@@ -298,11 +361,17 @@ const buildOAuthStsConfig = (): OAuthStsConfig | undefined => {
   return undefined;
 };
 
-// Build agentConfig using validated LLM configuration
-const oauthStsConfig = buildOAuthStsConfig();
+// Build agentConfig dynamically from the current LLM configuration loaded
+// from environment variables at module load.
+function buildAgentConfig(): Omit<AgentConfig, 'idToken' | 'userContext'> | null {
+  if (!llmConfig) {
+    return null;
+  }
 
-const agentConfig: Omit<AgentConfig, 'idToken' | 'userContext'> = llmConfig.llmProvider === 'anthropic'
-  ? {
+  const oauthStsConfig = buildOAuthStsConfig();
+
+  if (llmConfig.llmProvider === 'anthropic') {
+    return {
       mcpServerUrl: llmConfig.mcpServerUrl,
       name: 'agent0',
       version: '1.0.0',
@@ -311,8 +380,9 @@ const agentConfig: Omit<AgentConfig, 'idToken' | 'userContext'> = llmConfig.llmP
       anthropicApiKey: llmConfig.anthropicApiKey,
       anthropicModel: llmConfig.anthropicModel,
       enableLLM: true,
-    }
-  : {
+    };
+  } else {
+    return {
       mcpServerUrl: llmConfig.mcpServerUrl,
       name: 'agent0',
       version: '1.0.0',
@@ -325,8 +395,17 @@ const agentConfig: Omit<AgentConfig, 'idToken' | 'userContext'> = llmConfig.llmP
       bedrockModelId: llmConfig.bedrockModelId,
       enableLLM: true,
     };
+  }
+}
 
-export function getAgentForUserContext(idToken: string, userContext: UserContext): Agent {
+export async function getAgentForUserContext(idToken: string, userContext: UserContext): Promise<Agent> {
+  await initializeLLMConfig();
+
+  const agentConfig = buildAgentConfig();
+  if (!agentConfig) {
+    throw new Error('LLM configuration not available. Cannot create agent.');
+  }
+
   return new Agent({
     ...agentConfig,
     idToken,
@@ -348,12 +427,12 @@ export async function getAgentForSession (req: Request): Promise<Agent | null> {
   const subject = userInfo.sub;
 
   const existingAgent = subjectToAgent.get(subject);
-  
+
   if (existingAgent) {
     return existingAgent;
   }
 
-  const agent = getAgentForUserContext(
+  const agent = await getAgentForUserContext(
     idToken, userInfo
   );
 
@@ -378,11 +457,37 @@ export async function disconnectAll(): Promise<void> {
 // Maximum number of step-up authorization retries per tool call
 const MAX_STEPUP_RETRIES = 2;
 
+/**
+ * A live per-MCP connection: config + SDK client/transport + strategy + tools.
+ * Lifecycle owned by the Agent; one instance per entry in McpConnectionConfig[].
+ */
+interface McpConnection {
+  config: McpConnectionConfig;
+  strategy: AuthStrategy;
+  client: Client;
+  transport: StreamableHTTPClientTransport | null;
+  connected: boolean;
+  tools: any[];
+  /** Scopes last granted by the auth strategy (only meaningful for id-jag). */
+  grantedScopes: string[];
+}
+
+/**
+ * Returned from Agent.connect() when an MCP reports `interaction_required`
+ * (OAuth STS consent flow). Surfaced via /api/chat -> data.pending_consents.
+ */
+export interface PendingConsent {
+  mcpId: string;
+  resource: string;
+  interactionUri: string;
+  message?: string;
+}
+
 export class Agent {
-  private client: Client;
-  private transport: StreamableHTTPClientTransport | null = null;
+  private mcps: McpConnection[] = [];
+  /** tool-name -> owning mcpId for dispatch in callTool(). */
+  private toolToMcpId: Map<string, string> = new Map();
   private config: AgentConfig;
-  private isConnected = false;
   private availableTools: any[] = [];
   private anthropic: Anthropic | null = null;
   private bedrockClient: BedrockRuntimeClient | null = null;
@@ -390,28 +495,36 @@ export class Agent {
     role: 'user' | 'assistant';
     content: string | Array<any>;
   }> = [];
-  private tokenExchangeHandler: TokenExchangeHandler | null = null;
   private oauthStsHandler: OAuthStsHandler | null = null;
-  private grantedScopes: string[] = []; // Tracks scopes from last token exchange
+  /** Pending OAuth-STS consents from the last connect() call. Drained by /api/chat. */
+  private pendingConsents: PendingConsent[] = [];
 
   constructor(config: AgentConfig) {
     this.config = config;
-    this.client = new Client(
-      {
-        name: config.name,
-        version: config.version,
-      },
-      {
-        capabilities: {},
-      }
-    );
 
-    // Initialize Token Exchange Handler if configured
-    if (config.tokenExchange) {
-      this.tokenExchangeHandler = new TokenExchangeHandler(config.tokenExchange);
+    // Build the MCP connection list from the env-driven loader.
+    // Each entry gets its own SDK Client + AuthStrategy — they stay
+    // independent so one MCP's consent flow / scope step-up does not
+    // disturb another's live session.
+    const mcpConfigs = loadMcpConnectionConfigs();
+    for (const mcpConfig of mcpConfigs) {
+      this.mcps.push({
+        config: mcpConfig,
+        strategy: buildAuthStrategy(mcpConfig.auth),
+        client: new Client(
+          { name: config.name, version: config.version },
+          { capabilities: {} },
+        ),
+        transport: null,
+        connected: false,
+        tools: [],
+        grantedScopes: [],
+      });
     }
 
-    // Initialize OAuth STS Handler if configured
+    // Initialize OAuth STS Handler for the legacy GitHub OIN integration
+    // (separate from any GitHub MCP OAuth-STS MCP connection — different
+    // resource indicator, different managed connection in Okta).
     if (config.oauthSts) {
       this.oauthStsHandler = new OAuthStsHandler(config.oauthSts);
     }
@@ -447,152 +560,327 @@ export class Agent {
   // ============================================================================
 
   /**
-   * Connect to MCP server with token exchange
-   * @param requestedScopes - Optional scopes for step-up authorization
+   * Connect to every configured MCP server in parallel-ish order, each with
+   * its own auth strategy. Returns:
+   *   - ok: the MCPs that connected successfully
+   *   - pending: MCPs that reported `interaction_required` (OAuth STS consent)
+   * MCPs that hard-errored are logged and omitted from both lists.
+   *
+   * After this runs, fetchAvailableTools() has populated `availableTools` +
+   * `toolToMcpId` with the union across successful MCPs.
    */
-  async connect(requestedScopes?: string): Promise<boolean> {
+  async connect(): Promise<{ ok: McpConnection[]; pending: PendingConsent[] }> {
+    const ok: McpConnection[] = [];
+    const pending: PendingConsent[] = [];
+
     if (!this.isLLMEnabled()) {
       console.warn('⚠️ LLM integration not enabled. Cannot connect agent to MCP.');
-      return false;
+      return { ok, pending };
     }
 
-    if (!this.tokenExchangeHandler) {
-      console.error('❌ Token exchange not configured. Cannot connect to MCP server.');
-      return false;
+    if (this.mcps.length === 0) {
+      console.warn('⚠️  No MCP connections configured. Agent will run with no tools.');
+      return { ok, pending };
     }
 
+    for (const mcp of this.mcps) {
+      const result = await this.connectSingleMcp(mcp);
+      if (result === 'ok') {
+        ok.push(mcp);
+      } else if (result.status === 'interaction_required') {
+        pending.push({
+          mcpId: mcp.config.id,
+          resource: result.resource,
+          interactionUri: result.interactionUri,
+          message: result.message,
+        });
+      }
+      // hard errors: logged inside connectSingleMcp; neither ok nor pending
+    }
+
+    // Union tool list + populate dispatch map
+    this.rebuildUnifiedToolList();
+    this.pendingConsents = pending;
+    return { ok, pending };
+  }
+
+  /** Returns and clears the pending-consent list from the last connect(). */
+  consumePendingConsents(): PendingConsent[] {
+    const out = this.pendingConsents;
+    this.pendingConsents = [];
+    return out;
+  }
+
+  /** Non-destructive read of the current pending-consent list. */
+  getPendingConsents(): PendingConsent[] {
+    return [...this.pendingConsents];
+  }
+
+  /**
+   * Retry a previously pending MCP's connect (e.g. after user completed
+   * OAuth-STS consent). If it succeeds, the MCP's tools join the union.
+   */
+  async retryPendingMcp(mcpId: string): Promise<'ok' | 'still_pending' | 'error'> {
+    const mcp = this.mcps.find(m => m.config.id === mcpId);
+    if (!mcp) return 'error';
+    if (mcp.connected) return 'ok';
+    const result = await this.connectSingleMcp(mcp);
+    this.rebuildUnifiedToolList();
+    if (result === 'ok') {
+      // Drop any stale pending entry for this MCP
+      this.pendingConsents = this.pendingConsents.filter(p => p.mcpId !== mcpId);
+      return 'ok';
+    }
+    if (typeof result === 'object' && result.status === 'interaction_required') {
+      return 'still_pending';
+    }
+    return 'error';
+  }
+
+  /**
+   * Connect a single MCP. Returns:
+   *   'ok' on success,
+   *   a pending-consent shape when the strategy reported interaction_required,
+   *   an 'error' shape otherwise (also logged).
+   */
+  private async connectSingleMcp(
+    mcp: McpConnection,
+    requestedScopes?: string,
+  ): Promise<
+    | 'ok'
+    | { status: 'interaction_required'; resource: string; interactionUri: string; message?: string }
+    | { status: 'error'; error: string }
+  > {
+    const label = mcp.config.displayName || mcp.config.id;
     try {
-      console.log('🔌 Connecting to MCP server...');
-      console.log(`   Server: ${this.config.mcpServerUrl}`);
-      console.log('   Performing token exchange: ID Token → ID-JAG → MCP Access Token');
+      console.log(`🔌 Connecting MCP [${mcp.config.id}] (${label})...`);
+      console.log(`   Server: ${mcp.config.serverUrl}`);
+      console.log(`   Auth strategy: ${mcp.strategy.kind}`);
 
-      // Perform token exchange to get MCP access token
-      const tokenResult = await this.tokenExchangeHandler.exchangeToken(
-        this.config.idToken,
-        requestedScopes
-      );
+      const tokenResult = await mcp.strategy.getAccessToken(this.config.idToken, requestedScopes);
 
-      if (!tokenResult.success || !tokenResult.access_token) {
-        throw new Error('Token exchange failed or did not return access token');
+      if (tokenResult.status === 'interaction_required') {
+        console.log(`🔐 MCP [${mcp.config.id}] reports interaction_required — consent pending.`);
+        return {
+          status: 'interaction_required',
+          resource: tokenResult.resource,
+          interactionUri: tokenResult.interactionUri,
+          message: tokenResult.message,
+        };
+      }
+      if (tokenResult.status === 'error') {
+        console.error(`❌ MCP [${mcp.config.id}] auth failed: ${tokenResult.error} ${tokenResult.errorDescription || ''}`);
+        return { status: 'error', error: tokenResult.error };
       }
 
-      console.log('✅ Token exchange successful');
-      console.log(`⏰ Token expires in: ${tokenResult.expires_in}s`);
+      console.log(`✅ MCP [${mcp.config.id}] token acquired (expires in ${tokenResult.expiresIn}s)`);
 
-      // Track granted scopes (replace, don't accumulate)
-      this.grantedScopes = tokenResult.scope?.split(' ') || [];
-      if (this.grantedScopes.length) {
-        console.log(`🎯 Granted scopes: ${this.grantedScopes.join(' ')}`);
+      mcp.grantedScopes = tokenResult.scope?.split(' ') || [];
+      if (mcp.grantedScopes.length) {
+        console.log(`🎯 MCP [${mcp.config.id}] scopes: ${mcp.grantedScopes.join(' ')}`);
       }
 
-      // Create transport with access token in Authorization header
-      this.transport = new StreamableHTTPClientTransport(
-        new URL(this.config.mcpServerUrl),
+      mcp.transport = new StreamableHTTPClientTransport(
+        new URL(mcp.config.serverUrl),
         {
           requestInit: {
-            headers: {
-              'Authorization': `Bearer ${tokenResult.access_token}`
-            }
+            headers: { 'Authorization': `Bearer ${tokenResult.accessToken}` },
           },
-
-        }
+        },
       );
 
-      await this.client.connect(this.transport);
-      this.isConnected = true;
+      await mcp.client.connect(mcp.transport);
+      mcp.connected = true;
 
-      console.log('✅ Connected to MCP server successfully!\n');
+      // Per-MCP tool list
+      const toolsResp = await mcp.client.listTools();
+      mcp.tools = toolsResp.tools || [];
 
-      // Fetch available tools
-      await this.fetchAvailableTools();
-      return true;
-    } catch (error) {
-      console.error('❌ Failed to connect to MCP server:', error);
-      throw error;
+      console.log(`✅ MCP [${mcp.config.id}] connected with ${mcp.tools.length} tool(s)`);
+      return 'ok';
+    } catch (err: any) {
+      console.error(`❌ MCP [${mcp.config.id}] connect failed:`, err?.message || err);
+      mcp.connected = false;
+      return { status: 'error', error: err?.message || String(err) };
     }
   }
 
   /**
-   * Reconnect to MCP server with additional scopes (step-up authorization)
+   * Reconnect one MCP with additional scopes (step-up). Only that MCP is
+   * disconnected/reconnected — others stay live.
    */
-  private async reconnectWithScopes(requiredScopes: string[]): Promise<boolean> {
-    // Combine existing and new scopes (MCP spec recommends including existing)
-    const allScopes = [...new Set([...this.grantedScopes, ...requiredScopes])];
-    console.log('🔄 Step-up authorization...');
-    console.log(`   Current: ${this.grantedScopes.join(' ') || '(none)'}`);
-    console.log(`   Required: ${requiredScopes.join(' ')}`);
+  private async reconnectMcpWithScopes(mcpId: string, requiredScopes: string[]): Promise<boolean> {
+    const mcp = this.mcps.find(m => m.config.id === mcpId);
+    if (!mcp) {
+      console.error(`❌ Step-up: unknown mcpId=${mcpId}`);
+      return false;
+    }
+    // Only id-jag supports scope step-up — oauth-sts ignores requestedScopes
+    const allScopes = [...new Set([...mcp.grantedScopes, ...requiredScopes])];
+    console.log(`🔄 Step-up authorization for MCP [${mcpId}]...`);
+    console.log(`   Current: ${mcp.grantedScopes.join(' ') || '(none)'}`);
     console.log(`   Requesting: ${allScopes.join(' ')}`);
 
-    if (this.isConnected) {
-      await this.disconnect();
+    if (mcp.connected) {
+      await this.disconnectSingleMcp(mcp);
     }
 
-    return this.connect(allScopes.join(' '));
+    const result = await this.connectSingleMcp(mcp, allScopes.join(' '));
+    this.rebuildUnifiedToolList();
+    return result === 'ok';
   }
 
   async disconnect(): Promise<void> {
-    if (this.transport) {
-      await this.client.close();
-      this.isConnected = false;
-      console.log('\n👋 Disconnected from MCP server');
+    for (const mcp of this.mcps) {
+      await this.disconnectSingleMcp(mcp);
+    }
+    console.log('\n👋 Disconnected from all MCP servers');
+  }
+
+  private async disconnectSingleMcp(mcp: McpConnection): Promise<void> {
+    if (mcp.transport && mcp.connected) {
+      try {
+        await mcp.client.close();
+      } catch (err: any) {
+        console.warn(`   (close warning for [${mcp.config.id}]): ${err?.message || err}`);
+      }
+      mcp.connected = false;
+      mcp.transport = null;
     }
   }
 
+  /** Agent is "up" if at least one MCP connected — partial is OK. */
   isAgentConnected(): boolean {
-    return this.isConnected;
+    return this.mcps.some(m => m.connected);
+  }
+
+  /** Per-MCP connection view for /api/connections/status. */
+  getMcpConnectionStatuses(): Array<{
+    id: string;
+    displayName?: string;
+    serverUrl: string;
+    resourceIndicator?: string;
+    oktaMcpServerId?: string;
+    strategy: string;
+    connected: boolean;
+  }> {
+    return this.mcps.map(m => ({
+      id: m.config.id,
+      displayName: m.config.displayName,
+      serverUrl: m.config.serverUrl,
+      resourceIndicator: m.config.resourceIndicator,
+      oktaMcpServerId: m.config.oktaMcpServerId,
+      strategy: m.strategy.kind,
+      connected: m.connected,
+    }));
   }
 
   // ============================================================================
   // Tool Discovery and Execution
   // ============================================================================
 
-  async fetchAvailableTools(): Promise<void> {
-    try {
-      const response = await this.client.listTools();
-      this.availableTools = response.tools || [];
+  /**
+   * Build the union of tools across every connected MCP, and populate the
+   * toolName -> mcpId dispatch map. On name collision, the later MCP's tool
+   * is renamed `<mcpId>__<name>` and logged — the LLM still sees both.
+   */
+  private rebuildUnifiedToolList(): void {
+    this.availableTools = [];
+    this.toolToMcpId.clear();
 
-      console.log('🔧 Available Tools:');
-      console.log('='.repeat(60));
-      this.availableTools.forEach((tool, index) => {
-        console.log(`${index + 1}. ${tool.name}`);
-        console.log(`   📝 ${tool.description}`);
-        if (tool.inputSchema?.properties) {
-          const params = Object.keys(tool.inputSchema.properties);
-          if (params.length > 0) {
-            console.log(`   📋 Parameters: ${params.join(', ')}`);
-          }
+    for (const mcp of this.mcps) {
+      if (!mcp.connected) continue;
+      for (const tool of mcp.tools) {
+        let exposedName = tool.name;
+        if (this.toolToMcpId.has(exposedName)) {
+          const renamed = `${mcp.config.id}__${tool.name}`;
+          console.warn(`⚠️  Tool name collision on "${tool.name}" — exposing [${mcp.config.id}] as "${renamed}"`);
+          exposedName = renamed;
         }
-        console.log('');
-      });
-      console.log('='.repeat(60));
-    } catch (error) {
-      console.error('❌ Failed to fetch tools:', error);
+        this.toolToMcpId.set(exposedName, mcp.config.id);
+        this.availableTools.push({
+          ...tool,
+          name: exposedName,
+          // Keep the underlying MCP name so callTool can forward it untouched.
+          _originalName: tool.name,
+          _mcpId: mcp.config.id,
+        });
+      }
     }
+
+    console.log('🔧 Available Tools (union across MCPs):');
+    console.log('='.repeat(60));
+    this.availableTools.forEach((tool, index) => {
+      console.log(`${index + 1}. [${tool._mcpId}] ${tool.name}`);
+      console.log(`   📝 ${tool.description}`);
+      if (tool.inputSchema?.properties) {
+        const params = Object.keys(tool.inputSchema.properties);
+        if (params.length > 0) {
+          console.log(`   📋 Parameters: ${params.join(', ')}`);
+        }
+      }
+      console.log('');
+    });
+    console.log('='.repeat(60));
+  }
+
+  /** Legacy entry point kept for compatibility; just rebuilds the union. */
+  async fetchAvailableTools(): Promise<void> {
+    this.rebuildUnifiedToolList();
   }
 
   /**
-   * Call an MCP tool with automatic scope challenge handling
-   * Implements step-up authorization per MCP spec when insufficient_scope is returned
+   * Call an MCP tool with automatic scope challenge handling.
+   * Dispatches through toolToMcpId to the owning MCP's client. Step-up
+   * authorization only reconnects the offending MCP.
    */
   async callTool(toolName: string, args: any = {}, _retryCount: number = 0): Promise<any> {
     console.log(`\n🔄 Executing tool: ${toolName}`);
     console.log(`   Arguments: ${JSON.stringify(args, null, 2)}`);
 
-    try {
-      const response = await this.client.callTool({ name: toolName, arguments: args });
+    const mcpId = this.toolToMcpId.get(toolName);
+    if (!mcpId) {
+      throw new Error(`No MCP owns tool "${toolName}"`);
+    }
+    const mcp = this.mcps.find(m => m.config.id === mcpId);
+    if (!mcp) {
+      throw new Error(`MCP [${mcpId}] not found for tool "${toolName}"`);
+    }
 
-      // Check for scope challenge in response
+    // Find the original tool name (un-renamed) for the underlying MCP call.
+    const exposed = this.availableTools.find(t => t.name === toolName);
+    const underlyingName = exposed?._originalName || toolName;
+
+    try {
+      const response = await mcp.client.callTool({ name: underlyingName, arguments: args });
+
       const challenge = extractScopeChallenge(response);
       if (challenge && _retryCount < MAX_STEPUP_RETRIES) {
-        return this.retryWithStepUp(toolName, args, challenge, _retryCount);
+        return this.retryWithStepUp(toolName, args, mcp, challenge, _retryCount);
       }
 
       return response;
     } catch (error: any) {
-      // Check for scope challenge in error
       const challenge = extractScopeChallenge(error);
       if (challenge && _retryCount < MAX_STEPUP_RETRIES) {
-        return this.retryWithStepUp(toolName, args, challenge, _retryCount);
+        return this.retryWithStepUp(toolName, args, mcp, challenge, _retryCount);
+      }
+
+      // Non-scope 401/403 on an oauth-sts MCP: bearer likely revoked. Clear
+      // the cached token on the owning strategy and retry once.
+      if (
+        mcp.strategy.kind === 'oauth-sts' &&
+        _retryCount < MAX_STEPUP_RETRIES &&
+        /40[13]/.test(String(error?.message || ''))
+      ) {
+        console.log(`⚠️  MCP [${mcp.config.id}] returned 401/403 — clearing cached token and reconnecting.`);
+        mcp.strategy.clearCache();
+        if (mcp.connected) await this.disconnectSingleMcp(mcp);
+        const result = await this.connectSingleMcp(mcp);
+        this.rebuildUnifiedToolList();
+        if (result === 'ok') {
+          return this.callTool(toolName, args, _retryCount + 1);
+        }
       }
 
       console.error('❌ Tool execution failed:', error);
@@ -601,23 +889,38 @@ export class Agent {
   }
 
   /**
-   * Retry tool call after step-up authorization
+   * Retry tool call after step-up authorization — reconnects only the
+   * owning MCP, leaving other MCP sessions untouched.
    */
   private async retryWithStepUp(
     toolName: string,
     args: any,
+    mcp: McpConnection,
     challenge: ScopeChallenge,
     retryCount: number
   ): Promise<any> {
-    console.log(`\n⚠️  Scope challenge for: ${toolName}`);
+    console.log(`\n⚠️  Scope challenge for: ${toolName} on MCP [${mcp.config.id}]`);
     console.log(`   Required: ${challenge.scope.join(' ')}`);
 
-    if (await this.reconnectWithScopes(challenge.scope)) {
+    if (mcp.strategy.kind !== 'id-jag') {
+      // Scope step-up is an ID-JAG concept; oauth-sts MCPs surface missing
+      // permissions as interaction_required, not insufficient_scope.
+      console.warn(`   Step-up only supported on id-jag MCPs; [${mcp.config.id}] is ${mcp.strategy.kind}. Bubbling up.`);
+      throw new Error(`insufficient_scope on non-id-jag MCP [${mcp.config.id}]: ${challenge.scope.join(' ')}`);
+    }
+
+    if (await this.reconnectMcpWithScopes(mcp.config.id, challenge.scope)) {
       console.log('✅ Retrying tool call...');
       return this.callTool(toolName, args, retryCount + 1);
     }
 
     throw new Error(`Step-up authorization failed for: ${challenge.scope.join(' ')}`);
+  }
+
+  /** Expose the underlying ID-JAG handler for legacy callers. */
+  getTokenExchangeHandler(): TokenExchangeHandler | null {
+    const idJag = this.mcps.find(m => m.strategy.kind === 'id-jag');
+    return idJag ? (idJag.strategy as IdJagAuthStrategy).getUnderlyingHandler() : null;
   }
 
   // ============================================================================
@@ -669,7 +972,7 @@ export class Agent {
         content: userMessage,
       });
 
-      // Convert MCP tools to Anthropic tool format
+      // Convert MCP tools (union across all connected MCPs) to Anthropic tool format
       const tools: any[] = this.availableTools.map((tool) => ({
         name: tool.name,
         description: tool.description,
@@ -679,55 +982,13 @@ export class Agent {
         },
       }));
 
-      // Add GitHub tools if OAuth STS is configured
-      if (this.oauthStsHandler) {
-        tools.push({
-          name: 'github_comment_on_pr',
-          description: 'Post a comment on a GitHub pull request. Requires owner, repo, pr_number, and comment body.',
-          input_schema: {
-            type: 'object',
-            properties: {
-              owner: { type: 'string', description: 'GitHub repo owner/org' },
-              repo: { type: 'string', description: 'GitHub repo name' },
-              pr_number: { type: 'number', description: 'Pull request number' },
-              body: { type: 'string', description: 'Comment text to post' },
-            },
-            required: ['owner', 'repo', 'pr_number', 'body'],
-          },
-        });
-        tools.push({
-          name: 'github_list_repos',
-          description: 'List GitHub repositories accessible to the authenticated user. Returns repo names, URLs, and descriptions.',
-          input_schema: {
-            type: 'object',
-            properties: {},
-          },
-        });
-      }
+      // Create system message with context.
+      // Tool list is fully derived from connected MCPs' list_tools responses —
+      // no hardcoded tool descriptors. GitHub MCP, Todo0 MCP, etc. all register
+      // through the same `availableTools` path.
+      let systemMessage = `You are a helpful AI assistant with access to the following MCP tools: ${this.availableTools.map(t => t.name).join(', ') || '(none connected)'}.
 
-      // Create system message with context
-      let systemMessage = `You are a helpful AI assistant that can manage todos using the available MCP tools.
-You have access to the following tools: ${this.availableTools.map(t => t.name).join(', ')}.
-
-When the user asks to do something, analyze their request and call the appropriate tool with the correct parameters.
-- For creating todos: extract the todo content from the user's message
-- For listing todos: call get-todos without parameters
-- For updating todos: extract the todo ID and new title
-- For toggling todos: extract the todo ID
-- For deleting todos: extract the todo ID
-
-Always be helpful and conversational. If you successfully complete an action, let the user know in a friendly way.
-If you need more information, ask the user for clarification.`;
-
-      // Add GitHub tool instructions if OAuth STS is configured
-      if (this.oauthStsHandler) {
-        systemMessage += `\n\nYou also have access to GitHub tools for interacting with GitHub repositories.
-- github_list_repos: List repositories accessible to the authenticated user
-- github_comment_on_pr: Post a comment on a GitHub pull request
-
-When a user asks you to do something on GitHub (like list repos or comment on a PR), use the appropriate GitHub tool.
-If GitHub authorization is needed, the system will handle the consent flow.`;
-      }
+When the user asks to do something, analyze their request and call the appropriate tool with the correct parameters. If a tool you would need isn't in the list, explain that capability isn't currently available. Always be helpful and conversational; ask for clarification when needed.`;
 
       // Add user context if available
       if (userContext) {
@@ -739,117 +1000,149 @@ When the user asks "who am I" or "who is the owner", you can refer to this infor
 The todos you manage belong to this user.`;
       }
 
-      // Call LLM based on which client is initialized
-      const response = this.anthropic
+      // ----------------------------------------------------------------
+      // Tool-use loop (aka "agentic loop"):
+      //   1. Call the LLM.
+      //   2. If the response has any `tool_use` blocks, execute ALL of them,
+      //      emit matching `tool_result` blocks, append to history, loop.
+      //   3. Stop when the response is text-only (or the safety cap is hit).
+      // This replaces the earlier single-shot "final response" call, which
+      // broke whenever the LLM wanted to chain calls (e.g. get_me → list_repos).
+      // Anthropic's API requires every tool_use be followed by a matching
+      // tool_result IN THE NEXT MESSAGE — so we must never push an assistant
+      // turn with tool_use without also pushing its tool_results.
+      // ----------------------------------------------------------------
+      const MAX_TOOL_ITERATIONS = 8;
+      const toolResults: any[] = [];
+      let responseMessage = '';
+
+      let response = this.anthropic
         ? await this.callAnthropicAPI(systemMessage, tools)
         : await this.callBedrockAPI(systemMessage, tools);
 
-      // Handle tool calls
-      let toolResults: any[] = [];
-      let responseMessage = '';
-      let toolResultBlocks: Array<any> = [];
+      for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
+        const toolUseBlocks = response.content.filter((b: any) => b.type === 'tool_use');
 
-      // Check if there are tool uses
-      const hasToolUse = response.content.some((block: any) => block.type === 'tool_use');
+        if (toolUseBlocks.length === 0) {
+          // Terminal turn: text-only. Extract message, record history, done.
+          const textBlocks = response.content.filter((b: any) => b.type === 'text');
+          if (textBlocks.length > 0) {
+            responseMessage = textBlocks.map((b: any) => b.text).join('\n');
+          }
+          this.conversationHistory.push({ role: 'assistant', content: response.content });
+          break;
+        }
 
-      // Execute all tool calls and collect results
-      for (const block of response.content) {
-        if (block.type === 'tool_use') {
-          // Check if this is a GitHub tool (handled differently from MCP tools)
+        // There are tool_use blocks. Execute every one and build the
+        // tool_result blocks IN THE SAME ORDER. Anthropic allows any order
+        // for tool_result, but we pair by tool_use_id anyway.
+        const toolResultBlocks: any[] = [];
+
+        // Early-return sentinel: if any GitHub OIN tool reports
+        // interaction_required, we bail out BEFORE pushing the assistant
+        // turn — otherwise history would have an orphan tool_use.
+        let pendingConsentReturn: { name: string; input: any; uri: string; msg?: string } | null = null;
+
+        for (const block of toolUseBlocks) {
+          // GitHub OIN (non-MCP) path
           if ((block.name === 'github_comment_on_pr' || block.name === 'github_list_repos') && this.oauthStsHandler) {
             const githubResult = await this.handleGitHubTool(block.name, block.input);
 
-            // If interaction_required, return immediately to frontend
             if (githubResult.interaction_required) {
-              return {
-                success: true,
-                message: githubResult.message || 'GitHub authorization required.',
-                data: {
-                  interaction_required: true,
-                  interaction_uri: githubResult.interaction_uri,
-                  pendingToolCall: {
-                    name: block.name,
-                    input: block.input,
-                  },
-                },
+              pendingConsentReturn = {
+                name: block.name,
+                input: block.input,
+                uri: githubResult.interaction_uri!,
+                msg: githubResult.message,
               };
+              break;
             }
 
-            toolResults.push({
-              tool: block.name,
-              arguments: block.input,
-              result: githubResult.result,
-            });
-
+            toolResults.push({ tool: block.name, arguments: block.input, result: githubResult.result });
             toolResultBlocks.push({
               type: 'tool_result',
               tool_use_id: block.id,
               content: JSON.stringify(githubResult.result),
             });
+            continue;
+          }
+
+          // MCP tool path (Todo0, GitHub MCP, ...)
+          let result: any;
+          try {
+            result = await this.callTool(block.name, block.input);
+          } catch (err: any) {
+            // Feed the error back to the LLM as a tool_result so the model
+            // can recover or apologize — avoids leaving an orphan tool_use.
+            result = {
+              isError: true,
+              content: [{ type: 'text', text: `Tool "${block.name}" failed: ${err?.message || String(err)}` }],
+            };
+          }
+
+          let parsedResult: any = {};
+          if (result?.content?.[0]) {
+            try { parsedResult = JSON.parse(result.content[0].text); }
+            catch { parsedResult = result; }
           } else {
-            // Execute the MCP tool
-            const result = await this.callTool(block.name, block.input);
-
-            // Parse the result
-            let parsedResult: any = {};
-            if (result.content && result.content[0]) {
-              try {
-                parsedResult = JSON.parse(result.content[0].text);
-              } catch {
-                parsedResult = result;
-              }
-            }
-
-            toolResults.push({
-              tool: block.name,
-              arguments: block.input,
-              result: parsedResult,
-            });
-
-            // Collect tool result blocks for next request
-            toolResultBlocks.push({
-              type: 'tool_result',
-              tool_use_id: block.id,
-              content: JSON.stringify(result),
-            });
+            parsedResult = result;
           }
-        } else if (block.type === 'text') {
-          if (block.text) {
-            responseMessage += block.text;
-          }
+
+          toolResults.push({ tool: block.name, arguments: block.input, result: parsedResult });
+          toolResultBlocks.push({
+            type: 'tool_result',
+            tool_use_id: block.id,
+            content: JSON.stringify(result),
+          });
         }
-      }
 
-      // Add assistant's response to history (with tool_use and text blocks only)
-      this.conversationHistory.push({
-        role: 'assistant',
-        content: response.content,
-      });
+        if (pendingConsentReturn) {
+          // Do NOT push the assistant turn — its tool_use would be orphaned.
+          // Return the interaction_required payload; frontend will replay.
+          return {
+            success: true,
+            message: pendingConsentReturn.msg || 'GitHub authorization required.',
+            data: {
+              interaction_required: true,
+              interaction_uri: pendingConsentReturn.uri,
+              pendingToolCall: { name: pendingConsentReturn.name, input: pendingConsentReturn.input },
+            },
+          };
+        }
 
-      // If there were tool calls, process them
-      if (hasToolUse && toolResultBlocks.length > 0) {
-        // Add tool results to history as user message
-        this.conversationHistory.push({
-          role: 'user',
-          content: toolResultBlocks,
-        });
+        // Record this round of assistant(tool_use) + user(tool_result) and iterate.
+        this.conversationHistory.push({ role: 'assistant', content: response.content });
+        this.conversationHistory.push({ role: 'user', content: toolResultBlocks });
 
-        // Get final response after tool execution
-        const finalResponse = this.anthropic
+        // Capture any text the assistant emitted alongside the tool_use — the
+        // LLM sometimes narrates before calling tools ("Let me search...").
+        const interstitialText = response.content
+          .filter((b: any) => b.type === 'text' && b.text)
+          .map((b: any) => b.text)
+          .join('\n');
+        if (interstitialText) {
+          responseMessage = responseMessage
+            ? `${responseMessage}\n${interstitialText}`
+            : interstitialText;
+        }
+
+        // Next round.
+        response = this.anthropic
           ? await this.callAnthropicAPI(systemMessage, tools)
           : await this.callBedrockAPI(systemMessage, tools);
 
-        // Extract text from final response
-        const textBlocks = finalResponse.content.filter((block: any) => block.type === 'text');
-        if (textBlocks.length > 0) {
-          responseMessage = textBlocks.map((block: any) => block.text).join('\n');
+        if (iter === MAX_TOOL_ITERATIONS - 1) {
+          // Safety cap: record the final response even if it still has tool_use.
+          // We DON'T push it with tool_use to history (would corrupt future
+          // turns); instead we extract any text and warn.
+          const textBlocks = response.content.filter((b: any) => b.type === 'text');
+          if (textBlocks.length > 0) {
+            responseMessage = textBlocks.map((b: any) => b.text).join('\n');
+          }
+          console.warn(`⚠️  Tool-use loop hit cap (${MAX_TOOL_ITERATIONS}); stopping.`);
+          // Not pushing to history — safer to truncate this turn than corrupt it.
+          break;
         }
-
-        // Add final response to history
-        this.conversationHistory.push({
-          role: 'assistant',
-          content: finalResponse.content,
-        });
       }
 
       // Keep conversation history manageable
@@ -1036,6 +1329,40 @@ The todos you manage belong to this user.`;
 
   getOAuthStsHandler(): OAuthStsHandler | null {
     return this.oauthStsHandler;
+  }
+
+  /**
+   * Find an OAuth-STS handler by Resource Indicator. Searches both the
+   * legacy OIN handler (OAUTH_STS_RESOURCE) and any oauth-sts MCP
+   * connections (e.g. GitHub MCP at OAUTH_STS_RESOURCE_GITHUB_MCP).
+   * Returns null if no handler owns that resource.
+   */
+  getOAuthStsHandlerByResource(resource: string): OAuthStsHandler | null {
+    if (this.oauthStsHandler && this.config.oauthSts?.resource === resource) {
+      return this.oauthStsHandler;
+    }
+    for (const mcp of this.mcps) {
+      if (mcp.strategy.kind === 'oauth-sts' && mcp.strategy.resource === resource) {
+        // OAuthStsAuthStrategy wraps OAuthStsHandler — reach the underlying handler.
+        const underlying = (mcp.strategy as any).getUnderlyingHandler?.();
+        if (underlying) return underlying as OAuthStsHandler;
+      }
+    }
+    return null;
+  }
+
+  /** List every OAuth-STS resource currently registered (OIN + MCP). */
+  listOAuthStsResources(): Array<{ resource: string; scope: 'oin' | 'mcp'; mcpId?: string }> {
+    const out: Array<{ resource: string; scope: 'oin' | 'mcp'; mcpId?: string }> = [];
+    if (this.oauthStsHandler && this.config.oauthSts?.resource) {
+      out.push({ resource: this.config.oauthSts.resource, scope: 'oin' });
+    }
+    for (const mcp of this.mcps) {
+      if (mcp.strategy.kind === 'oauth-sts') {
+        out.push({ resource: mcp.strategy.resource, scope: 'mcp', mcpId: mcp.config.id });
+      }
+    }
+    return out;
   }
 
   getIdToken(): string {

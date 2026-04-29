@@ -11,9 +11,43 @@
 
 </div >
 
+> [!IMPORTANT]   
+> This repo requires the **SECURE_AI** feature flag to be enabled for your Okta org in order to test the offering. To enable it, work with your Okta account manager.
+> For more details, see: <https://support.okta.com/help/s/article/okta-secures-ai>
+
+## Contents
+
+- [Overview](#overview)
+  - [Architecture](#architecture)
+  - [Features](#features)
+- [Managed Connections](#managed-connections)
+  - [1. Authorization Server connections](#1-authorization-server-connections)
+  - [2. Application connections (GitHub REST API)](#2-application-connections-github-rest-api)
+  - [3. MCP Server connections (Todo0 and GitHub MCP)](#3-mcp-server-connections-todo0-and-github-mcp)
+  - [Connections panel](#connections-panel)
+- [Packages](#packages)
+- [Setup](#setup)
+  - [Prerequisites](#prerequisites)
+  - [Automated Configuration](#automated-configuration)
+  - [Verification](#verification)
+  - [Rollback](#rollback)
+  - [Manual Configuration](#manual-configuration)
+- [Install & build](#install--build)
+- [Running the demo services](#running-the-demo-services)
+- [Try it out](#try-it-out)
+  - [1. ID-JAG → MCP access token (Todo0)](#1-id-jag--mcp-access-token-todo0)
+  - [2. Step-up auth (expanded MCP scopes)](#2-step-up-auth-expanded-mcp-scopes)
+  - [3. OAuth STS brokered consent (GitHub)](#3-oauth-sts-brokered-consent-github)
+- [Notes](#notes)
+
 ## Overview
 
-This monorepo demonstrates an agentic application (agent0) that has a secure integration with another application's (todo0) MCP exposed resources.
+This monorepo is a runnable, end-to-end sample of the
+[Okta Secure AI](https://www.okta.com/solutions/secure-ai/) offerings —
+an agentic application (**agent0**) that securely integrates with another
+application's (**todo0**) MCP-exposed resources.
+
+![agent0 chat + Managed Connections panel](/docs/screenshots/hero.png)
 
 
 ### Architecture
@@ -122,7 +156,162 @@ graph TB
 - Okta OAuth2 authentication with ID-JAG token exchange
 - JWT validation and scope-based authorization
 - OAuth STS brokered consent for third-party integrations (e.g., GitHub)
+- **Multi-MCP**: agent0 connects to Todo0 and GitHub MCP servers concurrently, each with its own auth strategy
+- **Managed Connections panel**: live view of every Okta-managed connection wired on the agent
 - pnpm workspace structure
+
+## Managed Connections
+
+In [Okta Secure AI](https://www.okta.com/solutions/secure-ai/), a
+**managed connection** is a record on the agent identity that declares
+*every system the agent is authorized to reach* and under what terms.
+Okta defines five connection types; this sample wires up **three of them**
+— the set that maps cleanly to an end-to-end secure-agent story — and
+surfaces their live status in an in-app panel.
+
+| Kind | Okta admin label | Purpose |
+|------|------------------|---------|
+| `authorization_server` | Authorization Server | The AS that mints the ID-JAG the agent exchanges for MCP access tokens |
+| `application` | Application | A third-party ISV (e.g., GitHub) the agent reaches via Okta-brokered OAuth STS consent |
+| `mcp_server` | MCP Server | An MCP server registered in Okta (Todo0, GitHub MCP) |
+
+`secret` and `service_account` are out of scope for this sample.
+
+> **One ISV, two connection types.** This sample uses **GitHub as the
+> example for both `application` and `mcp_server` connections**. They are
+> *independent* managed connections pointing at different GitHub surfaces:
+> the `application` connection is for GitHub's **REST API**
+> (`api.github.com`), the `mcp_server` connection is for GitHub's **remote
+> MCP endpoint** (`api.githubcopilot.com/mcp`). Each gets its own Resource
+> Indicator and its own env var.
+
+All admin-console steps below live under:
+**Okta Admin Console → Directory → AI Agents → `{your agent}` → Managed connections**.
+
+### 1. Authorization Server connections
+
+An Authorization Server connection registers the AS that will issue
+**Cross-App Access tokens (ID-JAGs)** for the agent. The agent exchanges
+the user's ID token for an ID-JAG, then exchanges the ID-JAG for an
+MCP-scoped access token — proving both human identity and the agent's
+authorization chain without sharing the user's ID token downstream.
+
+**In this sample:** a single AS connection — the `Todo MCP Authorization
+Server` — is created automatically by `pnpm run bootstrap:okta`. It
+powers the `ID token → ID-JAG → MCP access token` flow for Todo0.
+
+**Developer steps:**
+
+Run `pnpm run bootstrap:okta`. The script provisions the Authorization
+Server, the agent identity, the JWT Bearer grant policy, and writes the
+following into `packages/agent0/.env.agent`:
+
+```env
+MCP_AUTHORIZATION_SERVER=https://<org>.okta.com/oauth2/<asId>
+MCP_AUTHORIZATION_SERVER_TOKEN_ENDPOINT=https://<org>.okta.com/oauth2/<asId>/v1/token
+AI_AGENT_TODO_MCP_SERVER_SCOPES_TO_REQUEST=mcp:connect mcp:tools:read mcp:tools:manage
+```
+
+### 2. Application connections (GitHub REST API)
+
+An Application connection declares a third-party ISV the agent can reach
+**via Okta's brokered-consent (OAuth STS) flow**. The agent never holds
+the user's ISV credentials; Okta mints an ISV access token after the user
+consents at the ISV the first time.
+
+**In this sample:** a GitHub Application connection. Powers the
+`github_comment_on_pr` tool which calls `api.github.com` with the
+Okta-brokered ISV access token.
+
+**Developer steps:**
+
+1. Make sure the `SECURE_AI_OAUTH_STS` feature flag is enabled on your
+   Okta org (work with your account manager if it isn't).
+2. Add the **GitHub** application from the OIN catalog to your Okta org
+   and complete the **Resource Server** tab:
+   - Client ID + Client Secret from your GitHub OAuth app
+   - Scopes the agent will request (e.g., `repo`, `read:user`)
+   - Callback URL: `https://<org>.okta.com/oauth2/v1/sts/callback`
+3. **Managed connections → + Add connection → Application**, pick the
+   GitHub OIN app, and save.
+4. Open the newly created connection and copy the **Resource Indicator**
+   — an ORN that looks like
+   `orn:okta:idp:<orgId>:client-auth-settings:<id>`.
+5. Paste it into `packages/agent0/.env.agent`:
+
+   ```env
+   OAUTH_STS_RESOURCE=orn:okta:idp:<orgId>:client-auth-settings:<id>
+   ```
+
+6. Restart the agent. The first PR-comment prompt triggers the consent
+   popup; once consent succeeds, the `OAuth STS Application` card in the
+   Connections panel flips to `LIVE`.
+
+### 3. MCP Server connections (Todo0 and GitHub MCP)
+
+An MCP Server connection registers an MCP endpoint (local, hosted, or
+ISV-operated) as a first-class resource on the agent. Each MCP connection
+carries its own Resource Indicator that the agent can target during token
+exchange.
+
+**In this sample:** *two* MCP Server connections running side by side.
+Each picks the auth strategy that matches its deployment — defined in
+`packages/agent0/src/connections/auth-strategy.ts`.
+
+| MCP server | URL | Auth strategy | Resource Indicator env var |
+|------------|-----|---------------|----------------------------|
+| Todo0 MCP Server | `http://localhost:5002/mcp` | ID-JAG → MCP access token | `MCP_RESOURCE_INDICATOR` (optional — defaults to the MCP URL) |
+| GitHub MCP Server | `https://api.githubcopilot.com/mcp/` | OAuth STS brokered consent | `OAUTH_STS_RESOURCE_GITHUB_MCP` |
+
+Adding a third MCP is one entry in `auth-strategy.ts` + the matching env
+vars — the Connections panel picks it up automatically via
+`GET /api/connections/status`.
+
+**Developer steps (GitHub MCP):**
+
+1. **Managed connections → + Add connection → MCP Server**.
+2. Provide the MCP URL (`https://api.githubcopilot.com/mcp/`). Okta
+   normalizes the URL on save (e.g., strips the trailing slash) — whatever
+   value Okta stores is the value you must use in env.
+3. Open the created connection and copy two values:
+   - **Resource Indicator** — may be URL-style
+     (`https://api.githubcopilot.com/mcp`) or ORN-style
+     (`orn:<okta-env>:idp:<orgId>:client-auth-settings:<id>`), depending on
+     how the connection was created. Copy it verbatim.
+   - **mcpServerId** — starts with `ems…`.
+4. Paste into `packages/agent0/.env.agent`:
+
+   ```env
+   GITHUB_MCP_SERVER_URL=https://api.githubcopilot.com/mcp/
+   OAUTH_STS_RESOURCE_GITHUB_MCP=<Resource Indicator from Okta>
+   OKTA_GITHUB_MCP_SERVER_ID=ems...
+   ```
+
+5. Restart the agent. The `Github MCP Server` card appears in the
+   Connections panel. Asking the agent to use a GitHub MCP tool triggers
+   the consent flow and flips the card to `LIVE`.
+
+> **Todo0 MCP is optional to register.** It runs locally and works without
+> an Okta registration. If you want the full end-to-end experience, expose
+> `http://localhost:5002/mcp` via a tunnel (ngrok, cloudflared) and repeat
+> the steps above, setting `OKTA_MCP_SERVER_ID` and
+> `MCP_RESOURCE_INDICATOR` instead.
+
+### Connections panel
+
+Click the 🔗 button in the header to open the panel. Each card shows:
+
+- Connection kind + instance name (e.g. `Todo0 MCP Server`, `Github MCP Server`)
+- Status chip — `LIVE` / `IDLE` / `DISABLED`
+- Key identifiers (AS URL, agent ID, resource indicator, MCP URL, Okta registration ID)
+
+The panel is backed by `GET /api/connections/status` and aggregates
+per-kind status builders in
+`packages/agent0/src/connections/registry.ts`. To opt a kind out entirely,
+set `DISABLED_CONNECTIONS=application` (or any comma-separated list) in
+`.env.agent`.
+
+![Managed Connections panel](docs/screenshots/connections-panel.png)
 
 ## Packages
 
@@ -288,6 +477,97 @@ pnpm run start:mcp     # Start todo0 MCP server (port 5002)
 pnpm run start:agent0  # Start agent0 application (port 3000)
 ```
 
+## Try it out
+
+Open <http://localhost:3000>, log in with Okta, then open the Managed
+Connections panel (🔗 in the header) in a second pane so you can watch the
+connection cards flip between `IDLE` and `LIVE` as each auth flow fires.
+
+The prompts below are grouped by the Okta capability they exercise. Run them
+top-to-bottom — each one leans on the context established by the previous.
+
+### 1. ID-JAG → MCP access token (Todo0)
+
+The agent exchanges your ID token for an **ID-JAG** at Okta Org AS, then
+exchanges the ID-JAG for an MCP-scoped access token at the custom Todo MCP
+Authorization Server. The MCP server validates the JWT + scopes before
+serving any tool.
+
+Try:
+
+```
+list my todos
+```
+```
+add a todo "prep the Okta demo"
+```
+```
+mark todo 2 as done
+```
+
+**What to look for:**
+- `Authorization Server` card → `LIVE`
+- `Todo0 MCP Server` card → `LIVE`
+- Expand the tool-call chip above each reply to see the raw MCP tool
+  arguments and result JSON.
+
+### 2. Step-up auth (expanded MCP scopes)
+
+Some MCP tools require a broader scope than the initial session holds. When
+the MCP server returns `insufficient_scope`, the agent silently re-runs the
+ID-JAG → MCP access token exchange with the extra scope and retries the
+tool. No user interaction needed.
+
+Try (right after step 1):
+
+```
+delete todo 3
+```
+
+**What to look for:**
+- A second tool chip appears for the retry. The first chip shows the
+  `insufficient_scope` challenge; the second shows the tool succeeding after
+  the expanded-scope access token is obtained.
+
+### 3. OAuth STS brokered consent (GitHub)
+
+> Requires `OAUTH_STS_RESOURCE` to be set in `packages/agent0/.env.agent`
+> and a managed connection to GitHub configured in Okta.
+
+The agent exchanges your ID token at Okta STS for a GitHub access token.
+The **first** exchange returns `interaction_required` — the UI shows a
+consent card linking to the ISV consent page. After consent, the retry
+succeeds and GitHub is called on your behalf.
+
+Try:
+
+```
+comment "LGTM" on https://github.com/<your-org>/<your-repo>/pull/1
+```
+
+**What to look for:**
+- First turn: a consent card appears in chat with a link to the GitHub
+  consent screen. Complete consent in a new tab.
+- After consent: the turn completes, the GitHub API call runs, and the
+  `OAuth STS Application` + `Github MCP Server` cards flip to `LIVE`.
+- The cached ISV token survives until its TTL; subsequent PR-comment
+  prompts run without a second consent prompt.
+
 ## Notes
 
 - See each package's README or source for more details and customization.
+
+## Feedback & issues
+
+Run into a problem, spotted a bug, or have a feature request?
+[Open an issue](https://github.com/oktadev/okta-secure-ai-agent-example/issues/new)
+on the repo — please include:
+
+- The step or prompt that triggered it (a snippet of your chat or the command you ran)
+- Relevant log output from `pnpm run dev` (redact tokens / client secrets)
+- Your Okta org type (developer / preview / production) and whether the
+  `SECURE_AI` feature flag is enabled
+
+For questions that aren't bug reports, start a
+[discussion](https://github.com/oktadev/okta-secure-ai-agent-example/discussions)
+instead.

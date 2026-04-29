@@ -9,6 +9,28 @@ function generateSessionSecret(): string {
   return crypto.randomBytes(32).toString('hex');
 }
 
+// LLM Configuration Types
+export interface AnthropicLLMConfig {
+  provider: 'anthropic';
+  apiKey: string;
+  model: string;
+}
+
+export interface BedrockLLMConfig {
+  provider: 'bedrock';
+  region: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+  sessionToken?: string;
+  modelId: string;
+}
+
+export interface SkipLLMConfig {
+  provider: 'skip';
+}
+
+export type LLMConfig = AnthropicLLMConfig | BedrockLLMConfig | SkipLLMConfig;
+
 export interface BootstrapConfig {
   oktaDomain: string;
 
@@ -28,6 +50,9 @@ export interface BootstrapConfig {
   mcpAuthServerId: string;
   mcpAudience: string;
   mcpScopes: string[];
+
+  // LLM Configuration (optional)
+  llmConfig?: LLMConfig;
 }
 
 /**
@@ -52,29 +77,67 @@ OKTA_REDIRECT_URI=http://localhost:3000/callback
 }
 
 /**
+ * Generate LLM configuration section based on mode
+ */
+function generateLLMConfigSection(llmConfig?: LLMConfig): string {
+  if (!llmConfig || llmConfig.provider === 'skip') {
+    // Skip mode: provide template for manual configuration
+    return `# ============================================================================
+# AGENT - LLM INTEGRATION CONFIGURATION
+# ============================================================================
+# Configure EITHER Anthropic OR AWS Bedrock (uncomment one section)
+
+# Option 1: Anthropic
+# ANTHROPIC_API_KEY=sk-ant-your-key-here
+# ANTHROPIC_MODEL=claude-sonnet-4-20250514
+
+# Option 2: AWS Bedrock
+# AWS_REGION=us-east-1
+# AWS_ACCESS_KEY_ID=your_aws_access_key
+# AWS_SECRET_ACCESS_KEY=your_aws_secret_key
+# BEDROCK_MODEL_ID=anthropic.claude-3-sonnet-20240229-v1:0
+`;
+  }
+
+  if (llmConfig.provider === 'anthropic') {
+    return `# ============================================================================
+# AGENT - LLM INTEGRATION CONFIGURATION
+# ============================================================================
+ANTHROPIC_API_KEY=${llmConfig.apiKey}
+ANTHROPIC_MODEL=${llmConfig.model}
+`;
+  }
+
+  if (llmConfig.provider === 'bedrock') {
+    let bedrockConfig = `# ============================================================================
+# AGENT - LLM INTEGRATION CONFIGURATION
+# ============================================================================
+AWS_REGION=${llmConfig.region}
+AWS_ACCESS_KEY_ID=${llmConfig.accessKeyId}
+AWS_SECRET_ACCESS_KEY=${llmConfig.secretAccessKey}
+BEDROCK_MODEL_ID=${llmConfig.modelId}
+`;
+    if (llmConfig.sessionToken) {
+      bedrockConfig += `AWS_SESSION_TOKEN=${llmConfig.sessionToken}\n`;
+    }
+    return bedrockConfig;
+  }
+
+  return '';
+}
+
+/**
  * Generate .env.agent file for agent0 package (AI Agent / MCP Client)
  */
 export function generateAgent0AgentEnv(config: BootstrapConfig): string {
+  const llmSection = generateLLMConfigSection(config.llmConfig);
+
   return `# ============================================================================
 # AGENT - MCP CLIENT CONFIGURATION
 # ============================================================================
 MCP_SERVER_URL=http://localhost:5002/mcp
 
-# ============================================================================
-# AGENT - LLM INTEGRATION CONFIGURATION
-# ============================================================================
-# Configure EITHER Anthropic Direct OR AWS Bedrock
-
-# Anthropic Direct
-ANTHROPIC_API_KEY=your_anthropic_api_key_here
-ANTHROPIC_MODEL=claude-3-5-sonnet-20241022
-
-# AWS Bedrock (alternative)
-# AWS_REGION=us-east-1
-# AWS_ACCESS_KEY_ID=your_aws_access_key
-# AWS_SECRET_ACCESS_KEY=your_aws_secret_key
-# BEDROCK_MODEL_ID=us.anthropic.claude-3-5-sonnet-20241022-v2:0
-
+${llmSection}
 # ============================================================================
 # AGENT - CROSS-APP ACCESS (ID-JAG TOKEN EXCHANGE)
 # ============================================================================
