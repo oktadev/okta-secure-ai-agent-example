@@ -165,7 +165,11 @@ export class AppServer {
           scriptSrc: ["'self'", 'https://cdn.jsdelivr.net'],
           styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
           fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
-          connectSrc: ["'self'"],
+          // api.iconify.design: runtime SVG fetch for the <iconify-icon> web
+          //   component used in the Managed Connections panel.
+          // cdn.jsdelivr.net: DevTools sourcemap fetches for the CDN scripts
+          //   already allowed in scriptSrc (dompurify, marked, iconify).
+          connectSrc: ["'self'", 'https://api.iconify.design', 'https://cdn.jsdelivr.net'],
           imgSrc: ["'self'", 'data:', 'https:'],
         },
       },
@@ -382,8 +386,8 @@ export class AppServer {
       }
     });
 
-    // Unified connections status: reports all five Okta managed-connection
-    // slots (authorization_server, application, secret, service_account,
+    // Unified connections status: reports the Okta managed-connection
+    // slots this sample supports (authorization_server, application,
     // mcp_server) so the UI "Connections" panel can render them uniformly.
     //
     // Returns env-derived state for the anonymous/logged-out case, and

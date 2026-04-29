@@ -1,18 +1,16 @@
 // connections/config.ts — DISABLED_CONNECTIONS env var parsing.
 //
-// Developers without access to every Okta feature (OPA, SaaS service accounts,
-// OIN brokered consent) can opt a connection kind out by adding its slug to
-// DISABLED_CONNECTIONS in .env.agent. Disabled kinds are reported in the
-// status endpoint with `disabled: true`, skip tool registration, and do not
-// construct their handler config.
+// Developers without access to every Okta feature (e.g. OIN brokered consent)
+// can opt a connection kind out by adding its slug to DISABLED_CONNECTIONS in
+// .env.agent. Disabled kinds are reported in the status endpoint with
+// `disabled: true`, skip tool registration, and do not construct their
+// handler config.
 
 import type { ConnectionKind } from './types.js';
 
 const VALID_KINDS: ReadonlySet<ConnectionKind> = new Set<ConnectionKind>([
   'authorization_server',
   'application',
-  'secret',
-  'service_account',
   'mcp_server',
 ]);
 

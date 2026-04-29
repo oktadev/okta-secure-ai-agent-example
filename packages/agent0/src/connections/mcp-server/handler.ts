@@ -1,20 +1,24 @@
 // handler.ts — MCP Server managed connection
 //
-// Fifth of the five managed-connection types from Okta's "Add connection"
-// admin UI. Unlike the other four, this connection represents the *MCP
-// resource server itself* (here: todo0) registered with Okta so Okta knows
-// about its protected-resource metadata and can enforce policy on it.
+// Third of the three managed-connection types this sample covers (alongside
+// Authorization Server and Application). Unlike the other two, this
+// connection represents the *MCP resource server itself* (here: todo0)
+// registered with Okta so Okta knows about its protected-resource metadata
+// and can enforce policy on it.
 //
 // The actual MCP protocol connection (tool listing, tool calls, streamable
 // HTTP) is established in `agent.ts` via the MCP SDK Client. This handler's
 // job is informational: surface "is the MCP configured / registered / ACTIVE
 // at Okta?" to the UI and the agent runtime.
 //
-// Registration is performed out-of-band by `scripts/connections/mcp-server/
-// register.ts` (run via `pnpm register:mcp`). Okta auto-discovers the MCP's
-// Authorization Server metadata from `<resourceUrl>/.well-known/oauth-
-// protected-resource` → `<issuer>/.well-known/oauth-authorization-server`.
-// Status lifecycle: PENDING → INACTIVE (or INVALID) → ACTIVE.
+// Registration is performed out-of-band via the Okta Admin Console
+// (Directory → AI Agents → Managed connections → MCP Server). After
+// registering, Okta auto-discovers the MCP's Authorization Server metadata
+// from `<resourceUrl>/.well-known/oauth-protected-resource` →
+// `<issuer>/.well-known/oauth-authorization-server`. Status lifecycle:
+// PENDING → INACTIVE (or INVALID) → ACTIVE. Copy the generated
+// `mcpServerId` into OKTA_MCP_SERVER_ID (or OKTA_GITHUB_MCP_SERVER_ID) so
+// this handler can report "registered at Okta".
 
 import {
   ConnectionHandler,
@@ -33,9 +37,10 @@ export interface McpServerConfig {
   /** Resource Indicator the MCP advertises (usually same as mcpServerUrl). */
   resourceIndicator?: string;
   /**
-   * Okta MCP server ID, if the MCP has been registered via
-   * `pnpm register:mcp`. Read from `.mcp-register-state.json` by the
-   * script; exposed to the agent via env for runtime status reporting.
+   * Okta MCP server ID, if the MCP has been registered at Okta via the
+   * Admin Console. Copy from Directory → AI Agents → Managed connections →
+   * MCP Server and set in env so this handler can report "registered at
+   * Okta" in /api/connections/status.
    */
   oktaMcpServerId?: string;
 }

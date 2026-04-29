@@ -384,7 +384,6 @@ async function rollback() {
       const envFiles = [
         'packages/agent0/.env.app',
         'packages/agent0/.env.agent',
-        'packages/agent0/.env.opa',
         'packages/todo0/.env.app',
         'packages/todo0/.env.mcp',
       ];

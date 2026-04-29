@@ -10,7 +10,6 @@ import {
   generateAgent0AgentEnv,
   generateTodo0AppEnv,
   generateTodo0McpEnv,
-  generateOpaEnvStub,
   writeEnvFile,
   writeConfigReport,
   BootstrapConfig,
@@ -470,14 +469,9 @@ async function bootstrap() {
           description: 'Store API key in .env.agent file',
         },
         {
-          title: 'Okta Privileged Access (Secure)',
-          value: 'opa',
-          description: 'Fetch credentials from OPA vault per user session',
-        },
-        {
           title: 'Skip (Manual Setup)',
           value: 'skip',
-          description: 'Configure .env.agent or .env.opa later',
+          description: 'Configure .env.agent later',
         },
       ],
       initial: 0,
@@ -560,22 +554,6 @@ async function bootstrap() {
           modelId: bedrockAnswers.modelId,
         };
       }
-    } else if (llmModeAnswer.mode === 'opa') {
-      // OPA mode - ask which provider they'll use
-      const opaProviderAnswer = await prompts({
-        type: 'select',
-        name: 'llmProvider',
-        message: 'Which LLM provider will you store in OPA?',
-        choices: [
-          { title: 'Anthropic (Claude)', value: 'anthropic' },
-          { title: 'AWS Bedrock', value: 'bedrock' },
-        ],
-      });
-
-      llmConfig = {
-        provider: 'opa',
-        llmProvider: opaProviderAnswer.llmProvider,
-      };
     }
 
     // Store LLM config for env generation
@@ -597,12 +575,6 @@ async function bootstrap() {
     const todo0McpEnv = generateTodo0McpEnv(bootstrapConfig as BootstrapConfig);
     writeEnvFile('packages/todo0/.env.mcp', todo0McpEnv);
 
-    // Generate .env.opa stub if OPA mode selected
-    if (llmConfig.provider === 'opa') {
-      const opaEnvStub = generateOpaEnvStub(llmConfig.llmProvider);
-      writeEnvFile('packages/agent0/.env.opa', opaEnvStub);
-    }
-
     writeConfigReport(bootstrapConfig as BootstrapConfig);
 
     spinner.succeed('Configuration files generated');
@@ -610,25 +582,13 @@ async function bootstrap() {
     // Success!
     console.log(chalk.bold.green('\n✅ Bootstrap Complete!\n'));
 
-    if (llmConfig.provider === 'opa') {
-      // OPA mode - show OPA-specific next steps
-      console.log(chalk.bold('Next steps for OPA mode:\n'));
-      console.log(`  ${chalk.cyan('1.')} ${chalk.white('pnpm install')} - Install dependencies`);
-      console.log(`  ${chalk.cyan('2.')} ${chalk.white('pnpm run build')} - Build and bootstrap database`);
-      console.log(`  ${chalk.cyan('3.')} ${chalk.yellow('pnpm run setup:opa')} - Create secrets in OPA vault`);
-      console.log(`  ${chalk.cyan('4.')} ${chalk.yellow('pnpm run link:opa')} - Connect agent to OPA secrets`);
-      console.log(`  ${chalk.cyan('5.')} ${chalk.white('pnpm run dev')} - Start all services`);
-      console.log(chalk.gray('\n  Note: Steps 3-4 configure OPA secret management'));
-    } else {
-      // Direct mode or skip - show standard next steps
-      console.log('Next steps:');
-      console.log(`  1. ${chalk.cyan('pnpm install')} - Install dependencies`);
-      console.log(`  2. ${chalk.cyan('pnpm run build')} - Build and bootstrap database`);
-      console.log(`  3. ${chalk.cyan('pnpm run dev')} - Start all services`);
+    console.log('Next steps:');
+    console.log(`  1. ${chalk.cyan('pnpm install')} - Install dependencies`);
+    console.log(`  2. ${chalk.cyan('pnpm run build')} - Build and bootstrap database`);
+    console.log(`  3. ${chalk.cyan('pnpm run dev')} - Start all services`);
 
-      if (llmConfig.provider === 'skip') {
-        console.log(chalk.yellow('\n  ⚠️  Remember to configure LLM credentials in .env.agent'));
-      }
+    if (llmConfig.provider === 'skip') {
+      console.log(chalk.yellow('\n  ⚠️  Remember to configure LLM credentials in .env.agent'));
     }
     console.log(`\n  Optional: ${chalk.cyan('pnpm run validate:okta')} - Validate configuration`);
     console.log(`\n📄 See ${chalk.cyan('okta-config-report.md')} for detailed configuration\n`);

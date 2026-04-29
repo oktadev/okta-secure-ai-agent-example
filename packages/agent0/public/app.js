@@ -26,6 +26,55 @@ function escapeHtml(text) {
 }
 
 // ============================================================================
+// Tool-call chip helpers
+// ============================================================================
+
+/**
+ * Best-effort one-line summary for a tool result. Shown in the collapsed chip
+ * header as a breadcrumb — the expanded body always has the raw JSON.
+ */
+function summarizeToolResult(result) {
+    if (!result || typeof result !== 'object') return '';
+    if (typeof result.count === 'number') {
+        return `${result.count} result${result.count === 1 ? '' : 's'}`;
+    }
+    if (result.todo && result.todo.id !== undefined) return `id=${result.todo.id}`;
+    if (result.error) return 'error';
+    if (result.success === true) return 'ok';
+    if (result.success === false) return 'error';
+    return '';
+}
+
+/**
+ * Render one <details> chip for a tool invocation. Collapsed by default.
+ * All untrusted strings are escaped before injection (innerHTML).
+ */
+function renderToolChip(entry) {
+    const name = entry && entry.tool ? String(entry.tool) : 'tool';
+    const args = entry && entry.arguments !== undefined ? entry.arguments : {};
+    const result = entry && entry.result !== undefined ? entry.result : {};
+    const summary = summarizeToolResult(result);
+    const argsJson = JSON.stringify(args, null, 2);
+    const resultJson = JSON.stringify(result, null, 2);
+    return `
+        <details class="tool-chip">
+            <summary>
+                <span class="tool-chip-caret" aria-hidden="true"></span>
+                <span class="tool-chip-icon" aria-hidden="true">🔧</span>
+                <span class="tool-chip-name">${escapeHtml(name)}</span>
+                ${summary ? `<span class="tool-chip-summary">· ${escapeHtml(summary)}</span>` : ''}
+            </summary>
+            <div class="tool-chip-body">
+                <div class="tool-chip-section-label">arguments</div>
+                <pre class="tool-chip-json">${escapeHtml(argsJson)}</pre>
+                <div class="tool-chip-section-label">result</div>
+                <pre class="tool-chip-json">${escapeHtml(resultJson)}</pre>
+            </div>
+        </details>
+    `;
+}
+
+// ============================================================================
 // Marked.js Configuration (Markdown Parser Security)
 // ============================================================================
 
@@ -55,10 +104,17 @@ const userInfo = document.getElementById('userInfo');
 const clearChatButton = document.getElementById('clearChatButton');
 const exportChatButton = document.getElementById('exportChatButton');
 const tokenPanelToggle = document.getElementById('tokenPanelToggle');
+const themeToggle = document.getElementById('themeToggle');
 const tokenPanel = document.getElementById('tokenPanel');
 const tokenPanelClose = document.getElementById('tokenPanelClose');
 const copyTokenButton = document.getElementById('copyTokenButton');
 const copyJwtButton = document.getElementById('copyJwtButton');
+const connectionsPanelToggle = document.getElementById('connectionsPanelToggle');
+const connectionsPanel = document.getElementById('connectionsPanel');
+const connectionsPanelBackdrop = document.getElementById('connectionsPanelBackdrop');
+const connectionsPanelClose = document.getElementById('connectionsPanelClose');
+const connectionsList = document.getElementById('connectionsList');
+const connectionsRefreshButton = document.getElementById('connectionsRefreshButton');
 
 let isConnected = false;
 let llmEnabled = false;
@@ -72,11 +128,46 @@ let pendingMessage = null; // Stores message to retry after OAuth STS consent
 const STORAGE_KEYS = {
     CONVERSATION: 'mcp_conversation_history',
     USER_PREFS: 'mcp_user_preferences',
-    SESSION_ID: 'mcp_session_id'
+    SESSION_ID: 'mcp_session_id',
+    THEME: 'mcp_theme',
 };
 
+// ============================================================================
+// Theme (light/dark) — applied to <html data-theme>, persisted per-browser
+// ============================================================================
+
+function resolveInitialTheme() {
+    const saved = localStorage.getItem(STORAGE_KEYS.THEME);
+    if (saved === 'light' || saved === 'dark') return saved;
+    // Honor the OS preference on first visit.
+    const prefersLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
+    return prefersLight ? 'light' : 'dark';
+}
+
+function applyTheme(theme) {
+    document.documentElement.setAttribute('data-theme', theme);
+    const icon = document.getElementById('themeToggleIcon');
+    if (icon) {
+        // Show the icon of what the button *switches to* — moon in light
+        // mode (click to go dark), sun in dark mode (click to go light).
+        icon.setAttribute('icon', theme === 'light' ? 'lucide:moon' : 'lucide:sun');
+    }
+}
+
+function toggleTheme() {
+    const current = document.documentElement.getAttribute('data-theme') || 'dark';
+    const next = current === 'light' ? 'dark' : 'light';
+    applyTheme(next);
+    localStorage.setItem(STORAGE_KEYS.THEME, next);
+}
+
+// Apply theme before anything else paints to avoid a flash of the wrong theme.
+applyTheme(resolveInitialTheme());
+
 const MAX_MESSAGES = 100; // Limit stored messages
-const STORAGE_VERSION = '1.0';
+// Bump when the persisted `data` shape changes — old entries are discarded on
+// load. v1.1 introduces the { toolResults } shape for assistant bubbles.
+const STORAGE_VERSION = '1.1';
 
 // Initialize session ID
 function getOrCreateSessionId() {
@@ -264,6 +355,423 @@ function closeTokenPanel() {
     tokenPanel.classList.remove('open');
 }
 
+// ============================================================================
+// Connections Panel Functions
+// ============================================================================
+
+// Section-level descriptors for the three managed-connection categories. These
+// render as the top-level "buckets" in the Connections panel; the cards inside
+// each section describe instances (the specific AS, ISV app, or MCP server).
+const CONNECTION_SECTIONS = [
+    {
+        kind: 'authorization_server',
+        title: 'Authorization Server',
+        icon: 'lucide:shield-check',
+    },
+    {
+        kind: 'application',
+        title: 'Application',
+        icon: 'lucide:app-window',
+    },
+    {
+        kind: 'mcp_server',
+        title: 'MCP Server',
+        icon: 'local:assets/mcp-icon.svg',
+    },
+];
+
+/**
+ * Best-effort mapping from an OAuth STS Resource Indicator (URL or Okta ORN)
+ * to a friendly ISV name + brand icon. Falls back to a generic icon when we
+ * can't infer — opaque ORNs don't carry the ISV name, so "connected to …"
+ * simply omits the app name in that case.
+ */
+function inferIsv(resource) {
+    if (!resource) return { name: null, icon: 'lucide:app-window' };
+    const s = String(resource).toLowerCase();
+    if (s.includes('github')) return { name: 'GitHub', icon: 'simple-icons:github' };
+    if (s.includes('slack')) return { name: 'Slack', icon: 'simple-icons:slack' };
+    if (s.includes('google')) return { name: 'Google', icon: 'simple-icons:google' };
+    if (s.includes('microsoft') || s.includes('office365')) {
+        return { name: 'Microsoft', icon: 'simple-icons:microsoft' };
+    }
+    if (s.includes('salesforce')) return { name: 'Salesforce', icon: 'simple-icons:salesforce' };
+    return { name: null, icon: 'lucide:app-window' };
+}
+
+/**
+ * Emit an icon HTML string. Accepts either:
+ *   - an Iconify name (e.g. "lucide:plug", "simple-icons:github")
+ *   - a "local:<path>" URI referencing an asset under /public (e.g.
+ *     "local:assets/mcp-icon.svg"). Local assets render as a span that
+ *     uses the SVG as a CSS mask so the icon picks up currentColor.
+ */
+function iconifyTag(icon, className = 'connection-card-icon') {
+    if (typeof icon === 'string' && icon.startsWith('local:')) {
+        const src = icon.slice('local:'.length);
+        return `<span class="${escapeHtml(className)} local-icon" style="--icon-src: url('${escapeHtml(src)}')" aria-hidden="true"></span>`;
+    }
+    return `<iconify-icon class="${escapeHtml(className)}" icon="${escapeHtml(icon)}" aria-hidden="true"></iconify-icon>`;
+}
+
+let lastFocusedBeforeConnectionsPanel = null;
+
+/** When docked (wide viewport), the panel is always visible; no modal theatrics. */
+function isConnectionsDocked() {
+    return window.matchMedia('(min-width: 1280px)').matches;
+}
+
+function openConnectionsPanel() {
+    if (isConnectionsDocked()) {
+        loadConnectionStatus();
+        return;
+    }
+    if (connectionsPanel.classList.contains('open')) return;
+    lastFocusedBeforeConnectionsPanel = document.activeElement;
+    connectionsPanel.classList.add('open');
+    connectionsPanel.setAttribute('role', 'dialog');
+    connectionsPanel.setAttribute('aria-modal', 'false');
+    connectionsPanelBackdrop?.classList.add('visible');
+    connectionsPanelToggle?.classList.add('active');
+    connectionsPanelToggle?.setAttribute('aria-expanded', 'true');
+    loadConnectionStatus();
+    setTimeout(() => connectionsPanelClose?.focus(), 50);
+}
+
+function closeConnectionsPanel() {
+    if (isConnectionsDocked()) return;
+    if (!connectionsPanel.classList.contains('open')) return;
+    connectionsPanel.classList.remove('open');
+    connectionsPanelBackdrop?.classList.remove('visible');
+    connectionsPanelToggle?.classList.remove('active');
+    connectionsPanelToggle?.setAttribute('aria-expanded', 'false');
+    if (lastFocusedBeforeConnectionsPanel instanceof HTMLElement) {
+        lastFocusedBeforeConnectionsPanel.focus();
+    } else {
+        connectionsPanelToggle?.focus();
+    }
+}
+
+/**
+ * Initial setup: when docked, pre-populate and re-hide the toggle button.
+ * Fires after DOM + listeners are ready.
+ */
+function initConnectionsPanelMode() {
+    const docked = isConnectionsDocked();
+    if (docked) {
+        connectionsPanelToggle?.setAttribute('aria-hidden', 'true');
+        loadConnectionStatus();
+    } else {
+        connectionsPanelToggle?.removeAttribute('aria-hidden');
+    }
+}
+
+async function loadConnectionStatus() {
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/connections/status`, {
+            credentials: 'include',
+        });
+        if (!response.ok) {
+            connectionsList.innerHTML = `<div class="connections-loading">Failed to load (HTTP ${response.status})</div>`;
+            return;
+        }
+        const data = await response.json();
+        renderConnectionStatus(data.connections || []);
+    } catch (err) {
+        console.error('Connections status fetch failed:', err);
+        connectionsList.innerHTML = `<div class="connections-loading">Failed to load connections</div>`;
+    }
+}
+
+/**
+ * Derive a single status pill per connection.
+ * mcp_server supports a tri-state 'partial' when some (but not all) MCPs are live.
+ */
+function statusFor(conn) {
+    if (conn.disabled) return { state: 'disabled', label: 'Disabled' };
+    if (!conn.configured) return { state: 'off', label: 'Off' };
+
+    if (conn.kind === 'mcp_server') {
+        const servers = conn.details?.servers || [];
+        const live = servers.filter((s) => s.connected).length;
+        if (servers.length > 0 && live === servers.length) return { state: 'live', label: 'Live' };
+        if (live > 0) return { state: 'partial', label: `Partial ${live}/${servers.length}` };
+        return { state: 'idle', label: 'Idle' };
+    }
+
+    return conn.connected
+        ? { state: 'live', label: 'Live' }
+        : { state: 'idle', label: 'Idle' };
+}
+
+/**
+ * Render a detail value, optionally copy-on-click. For values that look like
+ * opaque identifiers (URLs, ORNs, IDs), make them copyable.
+ */
+function renderValue(value, { copyable = true, hint = null } = {}) {
+    const safe = escapeHtml(value);
+    if (hint) {
+        return `<span class="connection-detail-value"><span>${safe}</span> <span class="connection-detail-hint">${escapeHtml(hint)}</span></span>`;
+    }
+    if (!copyable) {
+        return `<span class="connection-detail-value">${safe}</span>`;
+    }
+    return `<span class="connection-detail-value copyable" role="button" tabindex="0" title="Click to copy" data-copy="${safe}">${safe}</span>`;
+}
+
+function renderDetailRows(conn) {
+    const d = conn.details || {};
+    const rows = [];
+
+    if (conn.kind === 'authorization_server') {
+        if (d.authorizationServer) rows.push(['AS', renderValue(d.authorizationServer)]);
+        if (d.agentId) rows.push(['Agent ID', renderValue(d.agentId)]);
+    } else if (conn.kind === 'application') {
+        if (d.resource) rows.push(['Resource', renderValue(d.resource)]);
+    } else if (conn.kind === 'mcp_server') {
+        if (d.mcpServerUrl) rows.push(['URL', renderValue(d.mcpServerUrl)]);
+        if (d.resourceIndicator && d.resourceIndicator !== d.mcpServerUrl) {
+            rows.push(['Resource', renderValue(d.resourceIndicator)]);
+        }
+        if (d.registeredAtOkta) {
+            rows.push(['Registered', renderValue('Yes', { copyable: false })]);
+            if (d.oktaMcpServerId) rows.push(['Okta ID', renderValue(d.oktaMcpServerId)]);
+        } else {
+            rows.push([
+                'Registered',
+                renderValue('No', { copyable: false, hint: 'register in Okta Admin Console' }),
+            ]);
+        }
+    }
+
+    return rows
+        .map(
+            ([label, valueHtml]) => `
+            <div class="connection-detail-row">
+                <span class="connection-detail-label">${escapeHtml(label)}:</span>
+                ${valueHtml}
+            </div>
+        `
+        )
+        .join('');
+}
+
+/** Friendlier label for the auth strategy reported by the backend. */
+function strategyLabel(strategy) {
+    switch (strategy) {
+        case 'id-jag': return 'ID-JAG authed';
+        case 'oauth-sts': return 'OAuth STS authed';
+        case 'none': return 'Unauthenticated';
+        default: return strategy ? `${strategy} authed` : '';
+    }
+}
+
+/** Build one connection-card row with consistent structure. */
+function buildCard({ icon, title, state, statusLabel, subtitle, detailsHtml = '' }) {
+    return `
+        <div class="connection-card state-${state}">
+            <div class="connection-card-header">
+                ${icon ? iconifyTag(icon) : ''}
+                <span class="connection-card-title">${escapeHtml(title)}</span>
+                <span class="status-pill pill-${state}">${escapeHtml(statusLabel)}</span>
+            </div>
+            ${subtitle ? `<div class="connection-card-subtitle">${escapeHtml(subtitle)}</div>` : ''}
+            ${detailsHtml}
+        </div>
+    `;
+}
+
+/**
+ * Authorization Server card. Title is the AS hostname when we have it so
+ * operators can tell at a glance which Okta org / custom AS is wired.
+ */
+function renderAuthorizationServerCard(conn) {
+    const status = statusFor(conn);
+    const as = conn.details?.authorizationServer;
+    // Show the AS id (last path segment) or host — URLs are long.
+    let title = 'Custom Okta AS';
+    if (as) {
+        try {
+            const u = new URL(as);
+            const last = u.pathname.replace(/\/$/, '').split('/').pop();
+            title = last ? `Okta AS · ${last}` : u.host;
+        } catch {
+            title = as;
+        }
+    }
+    return buildCard({
+        icon: 'lucide:shield-check',
+        title,
+        state: status.state,
+        statusLabel: status.label,
+        subtitle: 'ID-JAG → MCP access token',
+        detailsHtml: conn.configured ? renderDetailRows(conn) : '',
+    });
+}
+
+/**
+ * Application (OAuth STS) card. Title names the ISV when we can infer one
+ * from the Resource Indicator (URL-style); falls back to the raw resource
+ * or a generic label for opaque ORNs.
+ */
+function renderApplicationCard(conn) {
+    const status = statusFor(conn);
+    const resource = conn.details?.resource;
+    const isv = inferIsv(resource);
+    const icon = isv.name ? isv.icon : 'lucide:app-window';
+    const title = isv.name || 'OAuth STS Application';
+    const subtitle = isv.name
+        ? (conn.connected ? `Connected to ${isv.name}` : `Brokered consent to ${isv.name}`)
+        : 'Brokered consent via OAuth STS';
+
+    return buildCard({
+        icon,
+        title,
+        state: status.state,
+        statusLabel: status.label,
+        subtitle,
+        detailsHtml: conn.configured ? renderDetailRows(conn) : '',
+    });
+}
+
+/**
+ * MCP server card. One per configured MCP (Todo MCP, GitHub MCP, …).
+ * Brand icon when the URL contains a recognizable ISV, generic plug otherwise.
+ */
+function renderMcpServerCard(server) {
+    const name = server.displayName || server.id || 'MCP Server';
+    const status = server.connected
+        ? { state: 'live', label: 'Live' }
+        : { state: 'idle', label: 'Idle' };
+    const brand = inferIsv(server.serverUrl);
+    // Unbranded MCPs (e.g. Todo0) fall back to the MCP logo so the card still
+    // reads as "an MCP server". Branded MCPs (GitHub, etc.) keep their ISV logo.
+    const icon = brand.name ? brand.icon : 'local:assets/mcp-icon.svg';
+
+    const rows = [];
+    if (server.serverUrl) rows.push(['URL', renderValue(server.serverUrl)]);
+    if (server.oktaMcpServerId) {
+        rows.push(['Okta ID', renderValue(server.oktaMcpServerId)]);
+    } else {
+        rows.push([
+            'Registered',
+            renderValue('No', { copyable: false, hint: 'register in Okta Admin Console' }),
+        ]);
+    }
+
+    const detailsHtml = rows
+        .map(
+            ([label, valueHtml]) => `
+            <div class="connection-detail-row">
+                <span class="connection-detail-label">${escapeHtml(label)}:</span>
+                ${valueHtml}
+            </div>
+        `
+        )
+        .join('');
+
+    return buildCard({
+        icon,
+        title: name,
+        state: status.state,
+        statusLabel: status.label,
+        subtitle: strategyLabel(server.strategy) || 'MCP Server',
+        detailsHtml,
+    });
+}
+
+/**
+ * Placeholder card when a section has no configured instances — still shown
+ * so the "three managed-connection types" story reads even when a slot is
+ * unconfigured or disabled.
+ */
+function renderEmptyCard(kind, note = 'Not configured') {
+    const section = CONNECTION_SECTIONS.find((s) => s.kind === kind);
+    const title = section ? section.title : kind;
+    const icon = section ? section.icon : null;
+    return buildCard({
+        icon,
+        title,
+        state: 'off',
+        statusLabel: 'Off',
+        subtitle: note,
+    });
+}
+
+/**
+ * Collect the cards for a single section. For mcp_server, each configured
+ * session becomes its own card; for the other kinds the connection itself
+ * is the card. Disabled / unconfigured slots collapse to a placeholder.
+ */
+function renderSectionBody(conn) {
+    if (!conn) return renderEmptyCard('application', 'Not configured');
+    if (conn.disabled) return renderEmptyCard(conn.kind, 'Disabled');
+    if (!conn.configured) return renderEmptyCard(conn.kind, 'Not configured');
+
+    if (conn.kind === 'authorization_server') return renderAuthorizationServerCard(conn);
+    if (conn.kind === 'application') return renderApplicationCard(conn);
+    if (conn.kind === 'mcp_server') {
+        const servers = Array.isArray(conn.details?.servers) ? conn.details.servers : [];
+        if (servers.length === 0) return renderEmptyCard('mcp_server', 'No MCP sessions');
+        return servers.map(renderMcpServerCard).join('');
+    }
+    return '';
+}
+
+function renderConnectionStatus(connections) {
+    if (!connections.length) {
+        connectionsList.innerHTML = `<div class="connections-loading">No connections reported</div>`;
+        return;
+    }
+
+    // Index incoming connections by kind so we can render the sections in a
+    // stable order regardless of backend ordering. Missing kinds show as
+    // empty-state placeholders to keep the three-category story intact.
+    const byKind = new Map(connections.map((c) => [c.kind, c]));
+
+    const sectionsHtml = CONNECTION_SECTIONS.map((section) => {
+        const conn = byKind.get(section.kind);
+        const body = renderSectionBody(conn);
+        return `
+            <section class="connection-section">
+                <div class="connection-section-header">
+                    ${iconifyTag(section.icon, 'connection-section-icon')}
+                    <span class="connection-section-title">${escapeHtml(section.title)}</span>
+                </div>
+                <div class="connection-section-body">
+                    ${body}
+                </div>
+            </section>
+        `;
+    }).join('');
+
+    connectionsList.innerHTML = sectionsHtml;
+}
+
+// Click-to-copy delegation for any element with .copyable + data-copy
+async function handleCopyableClick(target) {
+    const el = target.closest('.copyable');
+    if (!el) return;
+    const value = el.getAttribute('data-copy') || el.textContent || '';
+    try {
+        await navigator.clipboard.writeText(value);
+        el.classList.add('copied');
+        setTimeout(() => el.classList.remove('copied'), 1200);
+    } catch (err) {
+        console.warn('Clipboard copy failed:', err);
+    }
+}
+
+if (connectionsList) {
+    connectionsList.addEventListener('click', (e) => handleCopyableClick(e.target));
+    connectionsList.addEventListener('keydown', (e) => {
+        if ((e.key === 'Enter' || e.key === ' ') && e.target.classList.contains('copyable')) {
+            e.preventDefault();
+            handleCopyableClick(e.target);
+        }
+    });
+}
+
 async function loadTokenDetails() {
     try {
         const userDetails = await fetchUserDetails();
@@ -398,7 +906,41 @@ if (clearChatButton) clearChatButton.addEventListener('click', () => {
 });
 if (exportChatButton) exportChatButton.addEventListener('click', exportConversation);
 if (tokenPanelToggle) tokenPanelToggle.addEventListener('click', openTokenPanel);
+if (themeToggle) themeToggle.addEventListener('click', toggleTheme);
 if (tokenPanelClose) tokenPanelClose.addEventListener('click', closeTokenPanel);
+if (connectionsPanelToggle) connectionsPanelToggle.addEventListener('click', openConnectionsPanel);
+if (connectionsPanelClose) connectionsPanelClose.addEventListener('click', closeConnectionsPanel);
+if (connectionsPanelBackdrop) connectionsPanelBackdrop.addEventListener('click', closeConnectionsPanel);
+if (connectionsRefreshButton) {
+    connectionsRefreshButton.addEventListener('click', () => {
+        connectionsRefreshButton.classList.remove('spinning');
+        // reflow so the animation restarts each click
+        void connectionsRefreshButton.offsetWidth;
+        connectionsRefreshButton.classList.add('spinning');
+        connectionsRefreshButton.blur();
+        loadConnectionStatus();
+    });
+}
+
+// Esc closes the connections panel (and any other open side panel) when focused inside
+document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (connectionsPanel?.classList.contains('open') && !isConnectionsDocked()) {
+        closeConnectionsPanel();
+    } else if (tokenPanel?.classList.contains('open')) {
+        closeTokenPanel();
+    }
+});
+
+// Initial mode + react to viewport changes between docked / slide-out
+initConnectionsPanelMode();
+const connectionsDockedQuery = window.matchMedia('(min-width: 1280px)');
+if (connectionsDockedQuery.addEventListener) {
+    connectionsDockedQuery.addEventListener('change', initConnectionsPanelMode);
+} else if (connectionsDockedQuery.addListener) {
+    // Safari <14 fallback
+    connectionsDockedQuery.addListener(initConnectionsPanelMode);
+}
 if (copyTokenButton) copyTokenButton.addEventListener('click', async () => {
     const claims = document.getElementById('tokenClaims').textContent;
     await copyToClipboard(claims, copyTokenButton);
@@ -444,10 +986,11 @@ async function checkConnection() {
             }
             statusTextEl.textContent = statusText;
             
-            // Check authentication if Okta is enabled
+            // Check authentication if Okta is enabled. GitHub / OAuth STS
+            // status is surfaced by the Managed Connections panel (Application
+            // card), so no separate top-bar indicator check is needed.
             if (oktaEnabled) {
                 await checkAuthStatus();
-                await checkGitHubStatus();
             }
             
             return true;
@@ -469,8 +1012,15 @@ function addMessage(text, type = 'assistant', data = null) {
 function addMessageToDOM(text, type = 'assistant', data = null, saveToHistory = true) {
     // Hide typing indicator when adding a real message
     hideTypingIndicator();
-    
-    // Save to conversation history
+
+    // Nothing to render — skip mounting an empty bubble.
+    const toolResults = data && Array.isArray(data.toolResults) ? data.toolResults : [];
+    const hasToolChips = toolResults.length > 0;
+    if (!text && !hasToolChips) {
+        return;
+    }
+
+    // Save to conversation history (after gating, so we don't restore empty bubbles)
     if (saveToHistory && type !== 'system') {
         const messageRecord = {
             id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
@@ -482,88 +1032,46 @@ function addMessageToDOM(text, type = 'assistant', data = null, saveToHistory = 
         conversationHistory.push(messageRecord);
         saveConversationState();
     }
-    
+
     const messageDiv = document.createElement('div');
     messageDiv.className = `message ${type}`;
-    
+
     const contentDiv = document.createElement('div');
     contentDiv.className = 'message-content';
 
-    if (data && data.todos) {
-        // Format todos nicely
-        let html = `<strong>Found ${escapeHtml(data.count)} todo(s):</strong><br><br>`;
-        data.todos.forEach((todo, index) => {
-            const status = todo.completed ? '✅' : '⬜';
-            html += `<div class="todo-item ${todo.completed ? 'completed' : ''}">`;
-            html += `${status} <strong>${escapeHtml(todo.title)}</strong><br>`;
-            html += `<small>ID: ${escapeHtml(todo.id)}</small>`;
-            html += `</div>`;
-        });
-        contentDiv.innerHTML = html;
-    } else if (data && data.todo) {
-        // Format single todo
-        const todo = data.todo;
-        const status = todo.completed ? '✅' : '⬜';
-        let html = `<div class="todo-item ${todo.completed ? 'completed' : ''}">`;
-        html += `${status} <strong>${escapeHtml(todo.title)}</strong><br>`;
-        html += `<small>ID: ${escapeHtml(todo.id)}</small>`;
-        html += `</div>`;
-        if (data.message) {
-            html += `<br>${escapeHtml(data.message)}`;
-        }
-        contentDiv.innerHTML = html;
-    } else if (data && data.toolResults) {
-        // Format tool results from LLM
-        let html = '';
-        data.toolResults.forEach(tr => {
-            if (tr.result.todos) {
-                html += `<strong>Found ${escapeHtml(tr.result.count)} todo(s):</strong><br><br>`;
-                tr.result.todos.forEach((todo) => {
-                    const status = todo.completed ? '✅' : '⬜';
-                    html += `<div class="todo-item ${todo.completed ? 'completed' : ''}">`;
-                    html += `${status} <strong>${escapeHtml(todo.title)}</strong><br>`;
-                    html += `<small>ID: ${escapeHtml(todo.id)}</small>`;
-                    html += `</div>`;
-                });
-            } else if (tr.result.todo) {
-                const todo = tr.result.todo;
-                const status = todo.completed ? '✅' : '⬜';
-                html += `<div class="todo-item ${todo.completed ? 'completed' : ''}">`;
-                html += `${status} <strong>${escapeHtml(todo.title)}</strong><br>`;
-                html += `<small>ID: ${escapeHtml(todo.id)}</small>`;
-                html += `</div>`;
-            }
-        });
-        contentDiv.innerHTML = html;
-    } else {
-        // Render markdown for text messages (sanitized to prevent XSS)
-        if (text) {
-            try {
-                // Check if marked is available and use it
-                if (typeof marked !== 'undefined' && marked.parse) {
-                    const rawHtml = marked.parse(text);
-                    // Sanitize with DOMPurify to prevent XSS from LLM responses
-                    contentDiv.innerHTML = typeof DOMPurify !== 'undefined'
-                        ? DOMPurify.sanitize(rawHtml)
-                        : escapeHtml(rawHtml);
-                } else if (typeof window.marked !== 'undefined' && window.marked.parse) {
-                    const rawHtml = window.marked.parse(text);
-                    contentDiv.innerHTML = typeof DOMPurify !== 'undefined'
-                        ? DOMPurify.sanitize(rawHtml)
-                        : escapeHtml(rawHtml);
-                } else {
-                    // Fallback to plain text
-                    contentDiv.textContent = text;
-                }
-            } catch (error) {
-                console.error('Markdown parsing error:', error);
-                contentDiv.textContent = text;
-            }
-        } else {
-            contentDiv.textContent = text;
-        }
+    // Tool-call chips render above the prose. Collapsed by default.
+    if (hasToolChips) {
+        const chipsContainer = document.createElement('div');
+        chipsContainer.className = 'tool-chips';
+        chipsContainer.innerHTML = toolResults.map(renderToolChip).join('');
+        contentDiv.appendChild(chipsContainer);
     }
-    
+
+    // Render markdown for text (sanitized to prevent XSS from LLM responses).
+    if (text) {
+        const proseDiv = document.createElement('div');
+        proseDiv.className = 'message-prose';
+        try {
+            const parser = (typeof marked !== 'undefined' && marked.parse)
+                ? marked
+                : (typeof window.marked !== 'undefined' && window.marked.parse)
+                    ? window.marked
+                    : null;
+            if (parser) {
+                const rawHtml = parser.parse(text);
+                proseDiv.innerHTML = typeof DOMPurify !== 'undefined'
+                    ? DOMPurify.sanitize(rawHtml)
+                    : escapeHtml(rawHtml);
+            } else {
+                proseDiv.textContent = text;
+            }
+        } catch (error) {
+            console.error('Markdown parsing error:', error);
+            proseDiv.textContent = text;
+        }
+        contentDiv.appendChild(proseDiv);
+    }
+
     messageDiv.appendChild(contentDiv);
     chatContainer.appendChild(messageDiv);
     chatContainer.scrollTop = chatContainer.scrollHeight;
@@ -626,19 +1134,18 @@ async function processMessage(message) {
                     return;
                 }
 
-                // Show assistant message
-                if (result.message) {
-                    addMessage(result.message, 'assistant');
-                }
-
-                // Show tool results if any
-                if (result.toolResults && result.toolResults.length > 0) {
-                    addMessage('', 'assistant', result);
-                }
-
-                // Show data if available
-                if (result.data) {
-                    addMessage('', 'assistant', result.data);
+                // One bubble per turn: prose + (optional) collapsible tool-call chips.
+                // The three-bubble pattern (prose + tool cards + data) caused
+                // duplication and empty cards for tools whose result shape we
+                // didn't recognize. Chips are uniform across all tools.
+                const hasText = Boolean(result.message);
+                const hasTools = Array.isArray(result.toolResults) && result.toolResults.length > 0;
+                if (hasText || hasTools) {
+                    addMessage(
+                        result.message || '',
+                        'assistant',
+                        hasTools ? { toolResults: result.toolResults } : null
+                    );
                 }
             } else {
                 addMessage(`❌ ${result.message || 'An error occurred'}`, 'error');
@@ -671,26 +1178,30 @@ async function processWithoutLLM(message) {
             const result = await callTool('create-todo', { content });
             
             if (result.success) {
-                addMessage(`✅ Todo created successfully!`, 'assistant', result);
+                addMessage(`✅ Todo created successfully!`, 'assistant');
             } else {
                 addMessage(`❌ ${result.error}: ${result.message}`, 'error');
             }
             return;
         }
-        
+
         // List todos
         if (lowerMsg === 'list' || lowerMsg === 'show todos' || lowerMsg === 'todos' || lowerMsg.includes('show') || lowerMsg.includes('list')) {
             addMessage('Fetching todos...', 'system');
             const result = await callTool('get-todos');
-            
+
             if (result.success) {
-                addMessage('', 'assistant', result);
+                const todos = Array.isArray(result.todos) ? result.todos : [];
+                const body = todos.length
+                    ? todos.map(t => `- ${t.completed ? '✅' : '⬜'} **${t.title}** _(id: ${t.id})_`).join('\n')
+                    : '_No todos yet._';
+                addMessage(`**Found ${result.count ?? todos.length} todo(s):**\n\n${body}`, 'assistant');
             } else {
                 addMessage(`❌ ${result.error}: ${result.message}`, 'error');
             }
             return;
         }
-        
+
         // Update todo
         if (lowerMsg.startsWith('update') || lowerMsg.startsWith('edit')) {
             const match = message.match(/update|edit\s+(?:todo\s+)?(\w+)\s+to\s+(.+)/i);
@@ -698,9 +1209,9 @@ async function processWithoutLLM(message) {
                 const [, id, title] = match;
                 addMessage('Updating todo...', 'system');
                 const result = await callTool('update-todo', { id, title });
-                
+
                 if (result.success) {
-                    addMessage(`✅ Todo updated successfully!`, 'assistant', result);
+                    addMessage(`✅ Todo updated successfully!`, 'assistant');
                 } else {
                     addMessage(`❌ ${result.error}: ${result.message}`, 'error');
                 }
@@ -709,7 +1220,7 @@ async function processWithoutLLM(message) {
             }
             return;
         }
-        
+
         // Toggle todo
         if (lowerMsg.startsWith('toggle') || lowerMsg.startsWith('complete') || lowerMsg.startsWith('mark')) {
             const match = message.match(/(?:toggle|complete|mark)\s+(?:todo\s+)?(\w+)/i);
@@ -717,9 +1228,9 @@ async function processWithoutLLM(message) {
                 const id = match[1];
                 addMessage('Toggling todo...', 'system');
                 const result = await callTool('toggle-todo', { id });
-                
+
                 if (result.success) {
-                    addMessage(`✅ Todo toggled successfully!`, 'assistant', result);
+                    addMessage(`✅ Todo toggled successfully!`, 'assistant');
                 } else {
                     addMessage(`❌ ${result.error}: ${result.message}`, 'error');
                 }
@@ -728,7 +1239,7 @@ async function processWithoutLLM(message) {
             }
             return;
         }
-        
+
         // Delete todo
         if (lowerMsg.startsWith('delete') || lowerMsg.startsWith('remove')) {
             const match = message.match(/(?:delete|remove)\s+(?:todo\s+)?(\w+)/i);
@@ -736,9 +1247,9 @@ async function processWithoutLLM(message) {
                 const id = match[1];
                 addMessage('Deleting todo...', 'system');
                 const result = await callTool('delete-todo', { id });
-                
+
                 if (result.success) {
-                    addMessage(`✅ Todo deleted successfully!`, 'assistant', result);
+                    addMessage(`✅ Todo deleted successfully!`, 'assistant');
                 } else {
                     addMessage(`❌ ${result.error}: ${result.message}`, 'error');
                 }
@@ -942,14 +1453,15 @@ async function retryOAuthStsWithBackoff(button) {
                     `;
                 }
 
-                // Legacy OIN path toggles the GitHub status pill.
-                if (!resource) updateGitHubStatus(true);
-
                 // Brief pause to show success state, then clean up and continue
                 await new Promise(resolve => setTimeout(resolve, 1000));
                 if (consentMsg) consentMsg.remove();
 
                 addMessage(resource ? `Connected to ${resource}.` : 'GitHub connected successfully!', 'system');
+
+                // Refresh the Managed Connections panel so the Application
+                // (OAuth STS) card flips from Idle → Live.
+                loadConnectionStatus();
 
                 // Multi-MCP queue: if there are more pending consents, prompt
                 // for the next one. Otherwise replay the original chat message.
@@ -1017,7 +1529,10 @@ async function retryOAuthStsExchange(button) {
             if (consentMsg) consentMsg.remove();
 
             addMessage(resource ? `Connected to ${resource}.` : 'GitHub connected successfully!', 'system');
-            if (!resource) updateGitHubStatus(true);
+
+            // Refresh the Managed Connections panel so the Application
+            // (OAuth STS) card flips from Idle → Live.
+            loadConnectionStatus();
 
             // Drain any remaining queued consents first; otherwise replay the
             // original chat message.
@@ -1042,32 +1557,6 @@ async function retryOAuthStsExchange(button) {
         button.disabled = false;
         button.textContent = 'Retry Connection';
         addMessage('Failed to connect. Please try again.', 'error');
-    }
-}
-
-// GitHub connection status indicator
-function updateGitHubStatus(connected) {
-    const indicator = document.getElementById('githubStatus');
-    if (indicator) {
-        indicator.style.display = 'inline-block';
-        indicator.textContent = connected ? '🐙 GitHub' : '🐙 GitHub (not connected)';
-        indicator.className = connected ? 'github-status connected' : 'github-status';
-    }
-}
-
-async function checkGitHubStatus() {
-    try {
-        const response = await fetch(`${API_BASE_URL}/api/oauth-sts/status`, {
-            credentials: 'include',
-        });
-        if (response.ok) {
-            const data = await response.json();
-            if (data.configured) {
-                updateGitHubStatus(data.connected);
-            }
-        }
-    } catch (error) {
-        // Silently ignore - status check is optional
     }
 }
 

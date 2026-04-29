@@ -1,20 +1,18 @@
-// registry.ts — Aggregates ConnectionStatus across all five managed-connection
-// types for the /api/connections/status endpoint.
+// registry.ts — Aggregates ConnectionStatus across the managed-connection
+// types shipped with this sample for the /api/connections/status endpoint.
 //
-// Some connection handlers in this repo are classes that implement the full
-// ConnectionHandler contract (ServiceAccountHandler, McpServerHandler) while
-// others (authorization-server, application, secret) predate the contract and
-// expose their runtime via bespoke classes held inside the Agent. Rather than
-// refactor those three end-to-end, this registry derives their ConnectionStatus
-// from env presence plus per-user state available on the current Agent.
+// The GA sample covers three of the five Okta managed-connection types:
+//   - authorization_server (ID-JAG → MCP access token)
+//   - application          (OAuth STS brokered consent)
+//   - mcp_server           (Okta-registered MCP server)
+//
+// Secret and service_account connections are intentionally out of scope for
+// this sample and are not wired here.
 
 import type { Agent } from '../agent.js';
 import { ConnectionStatus } from './types.js';
 import { isConnectionDisabled } from './config.js';
-import { isOPAConfigured, getOPALLMProvider } from './secret/handler.js';
-import { ServiceAccountHandler } from './service-account/handler.js';
 import { McpServerHandler, loadMcpServerConfig } from './mcp-server/handler.js';
-import { getLLMConfigSource } from '../agent.js';
 
 // ============================================================================
 // Env helpers
@@ -72,7 +70,11 @@ function buildAuthorizationServerStatus(agent: Agent | null): ConnectionStatus {
 function buildApplicationStatus(agent: Agent | null): ConnectionStatus {
   const configured = isApplicationConfigured();
   const stsHandler = agent?.getOAuthStsHandler() ?? null;
-  const connected = !!(configured && stsHandler && stsHandler.getCachedToken() !== null);
+  // "Connected" = the user has successfully authorized this resource at
+  // least once this process lifetime. The access-token cache expires on its
+  // own TTL (getCachedToken()); the Application card intentionally reflects
+  // the durable authorization state so it doesn't flicker between exchanges.
+  const connected = !!(configured && stsHandler && stsHandler.isAuthorized());
   return {
     kind: 'application',
     configured,
@@ -81,28 +83,6 @@ function buildApplicationStatus(agent: Agent | null): ConnectionStatus {
       ? { resource: process.env.OAUTH_STS_RESOURCE }
       : undefined,
   };
-}
-
-function buildSecretStatus(agent: Agent | null): ConnectionStatus {
-  const configured = isOPAConfigured();
-  // "connected" = the current agent is running with credentials fetched
-  // from OPA this session (not from .env.agent fallback).
-  const connected = !!(configured && agent && getLLMConfigSource() === 'opa');
-  return {
-    kind: 'secret',
-    configured,
-    connected,
-    details: configured
-      ? {
-          provider: getOPALLMProvider(),
-          source: connected ? 'opa' : getLLMConfigSource(),
-        }
-      : undefined,
-  };
-}
-
-function buildServiceAccountStatus(): ConnectionStatus {
-  return new ServiceAccountHandler().getStatus();
 }
 
 function buildMcpServerStatus(agent: Agent | null): ConnectionStatus {
@@ -143,15 +123,13 @@ function applyDisabledFlag(status: ConnectionStatus): ConnectionStatus {
 }
 
 /**
- * Returns ConnectionStatus for all five managed-connection slots in the
- * order they appear in the Okta "Add connection" admin UI.
+ * Returns ConnectionStatus for the managed-connection slots this sample
+ * supports, in the order they appear in the Okta "Add connection" admin UI.
  */
 export function buildConnectionStatuses(agent: Agent | null): ConnectionStatus[] {
   return [
     buildAuthorizationServerStatus(agent),
     buildApplicationStatus(agent),
-    buildSecretStatus(agent),
-    buildServiceAccountStatus(),
     buildMcpServerStatus(agent),
   ].map(applyDisabledFlag);
 }

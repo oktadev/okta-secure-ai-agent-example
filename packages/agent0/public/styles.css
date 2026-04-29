@@ -22,6 +22,35 @@
     --radius:       16px;
     --radius-sm:    10px;
     --shadow:       0 10px 40px rgba(0, 0, 0, 0.5);
+    /* Elevation tints — swap direction in light mode. --elev-1 is the subtle
+       card/panel fill, --elev-2 is a stronger elevation (hover, inset body).
+       --json-bg/--chip-body-bg are local surfaces that intentionally differ
+       from the surrounding card and need their own dark/light pairing. */
+    --elev-1:       rgba(255, 255, 255, 0.02);
+    --elev-2:       rgba(255, 255, 255, 0.05);
+    --json-bg:      #0a0a0a;
+    --chip-body-bg: rgba(0, 0, 0, 0.15);
+    --glow-1:       rgba(63, 89, 228, 0.14);
+    --glow-2:       rgba(63, 89, 228, 0.10);
+}
+
+:root[data-theme="light"] {
+    --bg:           #faf9f6;
+    --surface:      #ffffff;
+    --surface-2:    #f3f3f0;
+    --border:       rgba(0, 0, 0, 0.09);
+    --border-hi:    rgba(0, 0, 0, 0.18);
+    --fg:           #1a1a1a;
+    --muted:        #5e5a54;
+    --muted-2:      #8a877f;
+    --primary-soft: rgba(63, 89, 228, 0.10);
+    --shadow:       0 10px 40px rgba(0, 0, 0, 0.08);
+    --elev-1:       rgba(0, 0, 0, 0.035);
+    --elev-2:       rgba(0, 0, 0, 0.07);
+    --json-bg:      #f1f1ee;
+    --chip-body-bg: rgba(0, 0, 0, 0.04);
+    --glow-1:       rgba(63, 89, 228, 0.07);
+    --glow-2:       rgba(63, 89, 228, 0.05);
 }
 
 * {
@@ -49,19 +78,28 @@ body::before {
     position: fixed;
     inset: 0;
     background:
-        radial-gradient(900px at 20% -10%, rgba(63, 89, 228, 0.14), transparent 60%),
-        radial-gradient(700px at 95% 110%, rgba(63, 89, 228, 0.10), transparent 55%);
+        radial-gradient(900px at 20% -10%, var(--glow-1), transparent 60%),
+        radial-gradient(700px at 95% 110%, var(--glow-2), transparent 55%);
     pointer-events: none;
     z-index: 0;
 }
 
-.container {
+.workspace {
     position: relative;
     z-index: 1;
+    display: flex;
+    gap: 20px;
+    align-items: stretch;
     width: 100%;
-    max-width: 880px;
+    max-width: 1400px;
     height: 92vh;
     max-height: 880px;
+}
+
+.container {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
@@ -72,10 +110,25 @@ body::before {
     backdrop-filter: blur(8px);
 }
 
+/* Narrow viewport: workspace collapses, container keeps original standalone sizing */
+@media (max-width: 1279px) {
+    .workspace {
+        display: block;
+        max-width: 880px;
+        height: auto;
+    }
+    .container {
+        height: 92vh;
+        max-height: 880px;
+    }
+}
+
 /* -------- Header -------- */
 .header {
     background: linear-gradient(180deg, #0b0b0b 0%, #0f0f0f 100%);
-    color: var(--fg);
+    /* Header bg is fixed dark in both themes; pin text colors to light values
+       so the title stays legible when --fg flips to dark in light mode. */
+    color: #f5f5f7;
     padding: 20px 24px;
     border-bottom: 1px solid var(--border);
     display: flex;
@@ -89,12 +142,12 @@ body::before {
     font-weight: 600;
     font-size: 22px;
     letter-spacing: -0.01em;
-    color: var(--fg);
+    color: #f5f5f7;
 }
 
 .header p {
     font-size: 13px;
-    color: var(--muted);
+    color: rgba(245, 245, 247, 0.7);
 }
 
 .auth-section {
@@ -193,7 +246,7 @@ body::before {
 /* -------- Status bar -------- */
 .status {
     padding: 10px 20px;
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--elev-1);
     border-bottom: 1px solid var(--border);
     font-size: 12px;
     color: var(--muted);
@@ -320,7 +373,7 @@ body::before {
 .message-content p:last-child  { margin-bottom: 0; }
 
 .message-content code {
-    background: rgba(255, 255, 255, 0.08);
+    background: var(--elev-2);
     padding: 2px 6px;
     border-radius: 4px;
     font-family: 'SF Mono', Monaco, Consolas, monospace;
@@ -332,7 +385,7 @@ body::before {
 }
 
 .message-content pre {
-    background: #0a0a0a;
+    background: var(--json-bg);
     border: 1px solid var(--border);
     padding: 12px;
     border-radius: 8px;
@@ -391,7 +444,7 @@ body::before {
 }
 
 .todo-item {
-    background: rgba(255, 255, 255, 0.03);
+    background: var(--elev-1);
     border: 1px solid var(--border);
     border-left: 3px solid var(--primary);
     padding: 10px 12px;
@@ -406,6 +459,111 @@ body::before {
     border-left-color: var(--success);
     opacity: 0.6;
     text-decoration: line-through;
+}
+
+/* -------- Tool-call chips -------- */
+/* Collapsible trace of MCP tool invocations, rendered above the prose inside
+   an assistant bubble. Always collapsed by default. */
+.tool-chips {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 10px;
+}
+
+.message-prose:empty {
+    display: none;
+}
+
+.tool-chip {
+    background: var(--elev-1);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 12.5px;
+    overflow: hidden;
+}
+
+.tool-chip > summary {
+    list-style: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 10px;
+    user-select: none;
+    color: var(--fg);
+}
+
+.tool-chip > summary::-webkit-details-marker {
+    display: none;
+}
+
+.tool-chip-caret {
+    display: inline-block;
+    width: 0;
+    height: 0;
+    border-top: 4px solid transparent;
+    border-bottom: 4px solid transparent;
+    border-left: 5px solid var(--muted-2, var(--muted));
+    transition: transform 0.15s ease;
+    flex-shrink: 0;
+}
+
+.tool-chip[open] > summary .tool-chip-caret {
+    transform: rotate(90deg);
+}
+
+.tool-chip-icon {
+    font-size: 12px;
+    opacity: 0.85;
+}
+
+.tool-chip-name {
+    font-family: 'SF Mono', Monaco, Consolas, monospace;
+    font-weight: 600;
+    color: var(--fg);
+}
+
+.tool-chip-summary {
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.tool-chip-body {
+    border-top: 1px solid var(--border);
+    padding: 10px;
+    background: var(--chip-body-bg);
+}
+
+.tool-chip-section-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin: 0 0 4px;
+}
+
+.tool-chip-section-label + .tool-chip-json {
+    margin-bottom: 10px;
+}
+
+.tool-chip-json {
+    background: var(--json-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    margin: 0;
+    font-family: 'SF Mono', Monaco, Consolas, monospace;
+    font-size: 11.5px;
+    line-height: 1.45;
+    color: var(--fg);
+    overflow-x: auto;
+    white-space: pre;
+}
+
+.tool-chip-body .tool-chip-json:last-child {
+    margin-bottom: 0;
 }
 
 /* -------- Input -------- */
@@ -557,7 +715,7 @@ pre {
     padding: 16px;
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--elev-1);
 }
 
 .token-section:last-child   { border-bottom: 1px solid var(--border); }
@@ -573,7 +731,7 @@ pre {
 }
 
 .token-info {
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--elev-1);
     border: 1px solid var(--border);
     padding: 14px;
     border-radius: 8px;
@@ -680,6 +838,473 @@ pre {
 
 @media (max-width: 768px) {
     .token-panel { width: 100%; right: -100%; }
+}
+
+/* -------- Connections Panel -------- */
+.connections-panel {
+    position: fixed;
+    right: -480px;
+    top: 0;
+    width: 480px;
+    height: 100vh;
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    box-shadow: -20px 0 60px rgba(0, 0, 0, 0.5);
+    transition: right 0.3s ease;
+    z-index: 2000;
+    overflow-y: auto;
+    color: var(--fg);
+}
+
+.connections-panel.open { right: 0; }
+
+.connections-panel-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(2px);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+    z-index: 1999;
+}
+
+.connections-panel-backdrop.visible {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.connections-panel-header {
+    background: var(--surface-2);
+    color: var(--fg);
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+.connections-panel-header h3 {
+    font-family: 'Playfair Display', serif;
+    font-weight: 600;
+    font-size: 18px;
+    flex: 1;
+    min-width: 0;
+}
+
+.connections-panel-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.icon-button {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 14px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+    font-family: inherit;
+    padding: 0;
+}
+
+.icon-button:hover {
+    color: var(--fg);
+    border-color: var(--border-hi);
+    background: var(--surface-2);
+}
+
+.icon-button:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+}
+
+.icon-button:focus:not(:focus-visible) { outline: none; }
+
+.icon-button.spinning { animation: connections-spin 0.6s linear; }
+
+@keyframes connections-spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+.auth-button.active {
+    background: var(--primary-soft);
+    border-color: var(--primary);
+    color: var(--fg);
+}
+
+.connections-panel-content { padding: 20px 24px; }
+
+.connections-intro {
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.6;
+    margin-bottom: 16px;
+}
+
+.connections-loading {
+    color: var(--muted);
+    font-size: 13px;
+    padding: 20px;
+    text-align: center;
+}
+
+/* Three top-level buckets — Authorization Server / Application / MCP Server.
+   Cards for each section nest inside .connection-section-body. */
+.connection-section {
+    margin-bottom: 22px;
+}
+
+.connection-section:last-child {
+    margin-bottom: 0;
+}
+
+.connection-section-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+}
+
+.connection-section-icon {
+    font-size: 16px;
+    line-height: 1;
+    color: var(--muted);
+    flex-shrink: 0;
+}
+
+.connection-section-title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+}
+
+.connection-section-body {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+/* Cards inside a section share vertical spacing via the body's gap — drop
+   the bottom margin that was used in the flat list layout. */
+.connection-section-body .connection-card {
+    margin-bottom: 0;
+}
+
+.connection-card {
+    margin-bottom: 14px;
+    padding: 14px 16px;
+    border: 1px solid var(--border);
+    border-left-width: 3px;
+    border-radius: var(--radius-sm);
+    background: var(--elev-1);
+}
+
+.connection-card.state-live       { border-left-color: var(--success); }
+.connection-card.state-partial    { border-left-color: var(--warning); }
+.connection-card.state-idle       { border-left-color: var(--warning); }
+.connection-card.state-off        { border-left-color: var(--border); opacity: 0.65; }
+.connection-card.state-disabled   { border-left-color: var(--muted); opacity: 0.5; }
+
+.connection-card-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+    min-width: 0;
+}
+
+.connection-card-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    line-height: 1;
+    color: var(--fg);
+    opacity: 0.95;
+    flex-shrink: 0;
+}
+
+/* Local SVG icons rendered via CSS mask so they pick up currentColor like
+   Iconify. --icon-src is supplied inline per-instance. */
+.local-icon {
+    display: inline-block;
+    flex-shrink: 0;
+    width: 1em;
+    height: 1em;
+    font-size: 20px;
+    background-color: currentColor;
+    -webkit-mask-image: var(--icon-src);
+    mask-image: var(--icon-src);
+    -webkit-mask-size: contain;
+    mask-size: contain;
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+    -webkit-mask-position: center;
+    mask-position: center;
+}
+
+/* Section-header local icons follow the smaller section-icon size. */
+.connection-section-icon.local-icon {
+    font-size: 16px;
+}
+
+.connection-card-title {
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--fg);
+    flex: 1;
+    min-width: 0;
+}
+
+.connection-card-subtitle {
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 10px;
+}
+
+.status-pill {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 3px 9px;
+    border-radius: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    border: 1px solid transparent;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.status-pill::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+}
+
+.status-pill.pill-live {
+    background: rgba(63, 185, 132, 0.12);
+    color: var(--success);
+    border-color: rgba(63, 185, 132, 0.35);
+}
+
+.status-pill.pill-live::before {
+    box-shadow: 0 0 6px rgba(63, 185, 132, 0.8);
+}
+
+.status-pill.pill-partial,
+.status-pill.pill-idle {
+    background: rgba(245, 165, 36, 0.12);
+    color: var(--warning);
+    border-color: rgba(245, 165, 36, 0.35);
+}
+
+.status-pill.pill-off,
+.status-pill.pill-disabled {
+    background: var(--elev-2);
+    color: var(--muted);
+    border-color: var(--border);
+}
+
+.connection-detail-row {
+    display: flex;
+    gap: 10px;
+    font-size: 12px;
+    line-height: 1.6;
+    padding: 4px 0;
+    min-width: 0;
+}
+
+.connection-detail-label {
+    color: var(--muted);
+    min-width: 72px;
+    flex-shrink: 0;
+}
+
+.connection-detail-value {
+    color: var(--fg);
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    font-family: 'SF Mono', Monaco, monospace;
+    font-size: 11px;
+    min-width: 0;
+    flex: 1;
+}
+
+.connection-detail-value.copyable {
+    cursor: pointer;
+    border-radius: 4px;
+    padding: 1px 4px;
+    margin: -1px -4px;
+    transition: background 0.15s ease;
+    position: relative;
+}
+
+.connection-detail-value.copyable:hover {
+    background: var(--elev-2);
+}
+
+.connection-detail-value.copyable:focus-visible {
+    outline: 1px solid var(--primary);
+    outline-offset: 1px;
+}
+
+.connection-detail-value.copied::after {
+    content: ' ✓ copied';
+    color: var(--success);
+    font-weight: 600;
+    font-family: inherit;
+}
+
+.connection-detail-hint {
+    color: var(--muted);
+    font-style: italic;
+    font-family: inherit;
+    font-size: 11px;
+}
+
+.connection-servers {
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--border);
+}
+
+.connection-servers-title {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 6px;
+}
+
+.connection-server {
+    padding: 8px 0;
+    min-width: 0;
+}
+
+.connection-server + .connection-server {
+    border-top: 1px dotted var(--border);
+}
+
+.connection-server-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    min-width: 0;
+}
+
+.connection-server-status {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.connection-server-status.live { background: var(--success); box-shadow: 0 0 6px rgba(63, 185, 132, 0.7); }
+.connection-server-status.down { background: var(--muted-2); }
+
+.connection-server-name {
+    flex: 1;
+    min-width: 0;
+    color: var(--fg);
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.connection-server-strategy {
+    color: var(--muted);
+    font-size: 10px;
+    font-family: 'SF Mono', Monaco, monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    flex-shrink: 0;
+}
+
+.connection-server-meta {
+    margin-left: 16px;
+    margin-top: 4px;
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1.55;
+    font-family: 'SF Mono', Monaco, monospace;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+.connection-server-meta-row {
+    display: flex;
+    gap: 6px;
+    min-width: 0;
+}
+
+.connection-server-meta-key {
+    color: var(--muted-2);
+    flex-shrink: 0;
+}
+
+.connection-server-meta-value {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+@media (max-width: 768px) {
+    .connections-panel { width: 100%; right: -100%; }
+    .connections-panel-header { padding: 16px; }
+    .connections-panel-content { padding: 16px; }
+    .connection-card { padding: 12px; }
+}
+
+/* Wide viewport: dock the panel as a second column inside .workspace */
+@media (min-width: 1280px) {
+    .connections-panel {
+        position: static;
+        right: auto;
+        top: auto;
+        width: 420px;
+        flex-shrink: 0;
+        height: 100%;
+        border: 1px solid var(--border);
+        border-left: 1px solid var(--border);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+        transition: none;
+        /* Render as if "open" — slide-out state is irrelevant when docked */
+    }
+
+    #connectionsPanelToggle,
+    #connectionsPanelClose,
+    .connections-panel-backdrop {
+        display: none !important;
+    }
+
+    .connections-panel-header {
+        border-top-left-radius: var(--radius);
+        border-top-right-radius: var(--radius);
+    }
 }
 
 /* -------- Modal -------- */
@@ -802,7 +1427,7 @@ pre {
     gap: 15px;
     padding: 14px 16px;
     border-radius: var(--radius-sm);
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--elev-1);
     border: 1px solid var(--border);
 }
 
@@ -893,25 +1518,6 @@ pre {
 
 .notification.show  { right: 24px; }
 .notification.error { background: var(--danger); }
-
-/* -------- GitHub status -------- */
-.github-status {
-    font-size: 11px;
-    padding: 4px 10px;
-    border-radius: 999px;
-    background: var(--surface-2);
-    border: 1px solid var(--border);
-    color: var(--muted);
-    font-weight: 500;
-    letter-spacing: 0.02em;
-    text-transform: uppercase;
-}
-
-.github-status.connected {
-    background: rgba(63, 185, 132, 0.12);
-    border-color: rgba(63, 185, 132, 0.3);
-    color: var(--success);
-}
 
 /* -------- OAuth STS consent prompt -------- */
 .consent-prompt {

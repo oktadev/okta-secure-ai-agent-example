@@ -159,7 +159,7 @@ export interface McpConnectionConfig {
   displayName?: string;
   /** Okta Resource Indicator, if one is advertised (used by oauth-sts flow). */
   resourceIndicator?: string;
-  /** Okta's MCP server id (from `.mcp-register-state*.json`), if known. */
+  /** Okta's MCP server id (from the Admin Console managed connection), if known. */
   oktaMcpServerId?: string;
   /** Auth strategy bundle (constructor materialises this into an AuthStrategy). */
   auth: McpAuthStrategyConfig;
@@ -212,7 +212,7 @@ export function loadMcpConnectionConfigs(): McpConnectionConfig[] {
       out.push({
         id: 'primary',
         serverUrl: mcpServerUrl,
-        displayName: 'Primary MCP (ID-JAG)',
+        displayName: 'Todo0 MCP Server',
         resourceIndicator: process.env.MCP_RESOURCE_INDICATOR || mcpServerUrl,
         oktaMcpServerId: process.env.OKTA_MCP_SERVER_ID,
         auth: {
@@ -240,7 +240,7 @@ export function loadMcpConnectionConfigs(): McpConnectionConfig[] {
       out.push({
         id: 'github',
         serverUrl: githubMcpUrl,
-        displayName: 'GitHub MCP (OAuth STS)',
+        displayName: 'Github MCP Server',
         resourceIndicator: githubMcpResource,
         oktaMcpServerId: process.env.OKTA_GITHUB_MCP_SERVER_ID,
         auth: {

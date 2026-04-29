@@ -16,15 +16,23 @@
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js"
             integrity="sha384-cwS6YdhLI7XS60eoDiC+egV0qHp8zI+Cms46R0nbn8JrmoAzV9uFL60etMZhAnSu"
             crossorigin="anonymous"></script>
-  
+    <!-- Iconify web component: pulls from lucide (UI) + simple-icons (brands) on
+         demand. Served from jsdelivr to satisfy the helmet CSP's scriptSrc
+         (api.iconify.design is allowed in connectSrc for the icon data fetch). -->
+    <script src="https://cdn.jsdelivr.net/npm/iconify-icon@2.1.0/dist/iconify-icon.min.js"></script>
+
 </head>
 <body>
+    <div class="workspace">
     <div class="container">
         <div class="header">
             <h1>Okta Secure AI Sample</h1>
             <div id="authSection" class="auth-section">
                 <span id="userInfo" class="user-info"></span>
-                <span id="githubStatus" class="github-status" style="display: none;"></span>
+                <button id="themeToggle" class="auth-button" title="Toggle light/dark theme" aria-label="Toggle theme">
+                    <iconify-icon id="themeToggleIcon" icon="lucide:moon" aria-hidden="true"></iconify-icon>
+                </button>
+                <button id="connectionsPanelToggle" class="auth-button" title="View Managed Connections" aria-expanded="false" aria-controls="connectionsPanel">🔗</button>
                 <button id="tokenPanelToggle" class="auth-button" style="display: none;" title="View ID Token">🔑</button>
                 <button id="loginButton" class="auth-button" style="display: none;">Login with Okta</button>
                 <button id="logoutButton" class="auth-button" style="display: none;">Logout</button>
@@ -60,6 +68,24 @@
             <button id="sendButton">Send</button>
         </div>
     </div>
+
+    <!-- Side Panel for Managed Connections (docked on wide screens, slide-out on narrow) -->
+    <div id="connectionsPanelBackdrop" class="connections-panel-backdrop" aria-hidden="true"></div>
+    <aside id="connectionsPanel" class="connections-panel" role="complementary" aria-labelledby="connectionsPanelTitle">
+        <div class="connections-panel-header">
+            <h3 id="connectionsPanelTitle">🔗 Managed Connections</h3>
+            <div class="connections-panel-header-actions">
+                <button id="connectionsRefreshButton" class="icon-button" title="Refresh" aria-label="Refresh connections">↻</button>
+                <button id="connectionsPanelClose" class="icon-button" title="Close" aria-label="Close panel">✕</button>
+            </div>
+        </div>
+        <div class="connections-panel-content">
+            <div id="connectionsList" class="connections-list" aria-live="polite">
+                <div class="connections-loading">Loading...</div>
+            </div>
+        </div>
+    </aside>
+    </div><!-- /.workspace -->
 
     <!-- Side Panel for Token Details -->
     <div id="tokenPanel" class="token-panel">
