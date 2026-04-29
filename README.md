@@ -12,7 +12,7 @@
 </div >
 
 > [!IMPORTANT]   
-> This repo requires the **SECURE_AI SKU** to be enabled for your Okta org in order to test the offering. To enable it, work with your Okta account manager.
+> This repo requires the **SECURE_AI** feature flag to be enabled for your Okta org in order to test the offering. To enable it, work with your Okta account manager.
 > For more details, see: <https://support.okta.com/help/s/article/okta-secures-ai>
 
 ## Overview
