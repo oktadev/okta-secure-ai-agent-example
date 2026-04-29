@@ -15,9 +15,35 @@
 > This repo requires the **SECURE_AI** feature flag to be enabled for your Okta org in order to test the offering. To enable it, work with your Okta account manager.
 > For more details, see: <https://support.okta.com/help/s/article/okta-secures-ai>
 
+## Contents
+
+- [Overview](#overview)
+  - [Architecture](#architecture)
+  - [Features](#features)
+- [Managed Connections](#managed-connections)
+  - [Multi-MCP support](#multi-mcp-support)
+  - [Connections panel](#connections-panel)
+- [Packages](#packages)
+- [Setup](#setup)
+  - [Prerequisites](#prerequisites)
+  - [Automated Configuration](#automated-configuration)
+  - [Verification](#verification)
+  - [Rollback](#rollback)
+  - [Manual Configuration](#manual-configuration)
+- [Install & build](#install--build)
+- [Running the demo services](#running-the-demo-services)
+- [Try it out](#try-it-out)
+  - [1. ID-JAG → MCP access token (Todo0)](#1-id-jag--mcp-access-token-todo0)
+  - [2. Step-up auth (expanded MCP scopes)](#2-step-up-auth-expanded-mcp-scopes)
+  - [3. OAuth STS brokered consent (GitHub)](#3-oauth-sts-brokered-consent-github)
+- [Notes](#notes)
+
 ## Overview
 
-This monorepo demonstrates an agentic application (agent0) that has a secure integration with another application's (todo0) MCP exposed resources.
+This monorepo is a runnable, end-to-end sample of the
+[Okta Secure AI](https://www.okta.com/solutions/secure-ai/) offerings —
+an agentic application (**agent0**) that securely integrates with another
+application's (**todo0**) MCP-exposed resources.
 
 ![agent0 chat + Managed Connections panel](/docs/screenshots/hero.png)
 
@@ -423,3 +449,18 @@ comment "LGTM" on https://github.com/<your-org>/<your-repo>/pull/1
 ## Notes
 
 - See each package's README or source for more details and customization.
+
+## Feedback & issues
+
+Run into a problem, spotted a bug, or have a feature request?
+[Open an issue](https://github.com/oktadev/okta-secure-ai-agent-example/issues/new)
+on the repo — please include:
+
+- The step or prompt that triggered it (a snippet of your chat or the command you ran)
+- Relevant log output from `pnpm run dev` (redact tokens / client secrets)
+- Your Okta org type (developer / preview / production) and whether the
+  `SECURE_AI` feature flag is enabled
+
+For questions that aren't bug reports, start a
+[discussion](https://github.com/oktadev/okta-secure-ai-agent-example/discussions)
+instead.
