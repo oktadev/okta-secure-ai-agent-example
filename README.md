@@ -12,7 +12,7 @@
 </div >
 
 > [!IMPORTANT]   
-> This sample requires **Okta for AI agents** feature. Contact your Okta account manager for more information
+> This sample requires **Okta for AI Agents** feature. Contact your Okta account manager for more information
 
 ## Contents
 
