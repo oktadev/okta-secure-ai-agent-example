@@ -120,6 +120,49 @@ importers:
         specifier: ^5.9.3
         version: 5.9.3
 
+  packages/agentb:
+    dependencies:
+      '@anthropic-ai/sdk':
+        specifier: ^0.32.0
+        version: 0.32.1
+      '@aws-sdk/client-bedrock-runtime':
+        specifier: ^3.709.0
+        version: 3.917.0
+      '@modelcontextprotocol/sdk':
+        specifier: 1.19.1
+        version: 1.19.1
+      '@okta/jwt-verifier':
+        specifier: ^4.0.2
+        version: 4.0.2
+      axios:
+        specifier: ^1.12.2
+        version: 1.12.2
+      dotenv:
+        specifier: ^17.2.3
+        version: 17.2.3
+      express:
+        specifier: ^5.1.0
+        version: 5.1.0
+      helmet:
+        specifier: ^8.0.0
+        version: 8.1.0
+      jsonwebtoken:
+        specifier: ^9.0.2
+        version: 9.0.2
+    devDependencies:
+      '@types/express':
+        specifier: 4.17.21
+        version: 4.17.21
+      '@types/jsonwebtoken':
+        specifier: ^9.0.10
+        version: 9.0.10
+      '@types/node':
+        specifier: ^20.19.19
+        version: 20.19.23
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+
   packages/todo0:
     dependencies:
       '@modelcontextprotocol/sdk':

@@ -9,6 +9,12 @@ import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedroc
 import { TokenExchangeHandler, TokenExchangeConfig, parseScopeChallenge } from './connections/authorization-server/handler.js';
 import { OAuthStsHandler, OAuthStsConfig } from './connections/application/handler.js';
 import { GitHubService } from './connections/application/tools/github.js';
+import {
+  A2AServerHandler,
+  A2AServerConfig,
+  loadA2AServerConfig,
+  A2A_TOOL_NAME,
+} from './connections/a2a-server/handler.js';
 import { isConnectionDisabled } from './connections/config.js';
 import {
   AuthStrategy,
@@ -27,6 +33,17 @@ interface ScopeChallenge {
   scope: string[];
   errorDescription?: string;
 }
+
+// ============================================================================
+// Realtime progress events (streamed to the UI during a chat turn)
+// ============================================================================
+
+export type AgentProgressEvent =
+  | { kind: 'thinking' }                                              // about to call the LLM
+  | { kind: 'note'; text: string }                                    // freeform status line
+  | { kind: 'tool'; tool: string; phase: 'start' | 'done'; ok?: boolean; detail?: string };
+
+export type ProgressFn = (evt: AgentProgressEvent) => void;
 
 /**
  * Extract scope challenge from any source (HTTP error, MCP response, or error message)
@@ -292,6 +309,9 @@ export interface AgentConfig {
   // OAuth STS Brokered Consent Config
   oauthSts?: OAuthStsConfig;
 
+  // A2A server connection (agent0 → Agent B, the second-hop downstream agent)
+  a2aServer?: A2AServerConfig;
+
   // Anthropic Direct
   anthropicApiKey?: string;
   anthropicModel?: string;
@@ -369,6 +389,7 @@ function buildAgentConfig(): Omit<AgentConfig, 'idToken' | 'userContext'> | null
   }
 
   const oauthStsConfig = buildOAuthStsConfig();
+  const a2aServerConfig = loadA2AServerConfig() ?? undefined;
 
   if (llmConfig.llmProvider === 'anthropic') {
     return {
@@ -377,6 +398,7 @@ function buildAgentConfig(): Omit<AgentConfig, 'idToken' | 'userContext'> | null
       version: '1.0.0',
       tokenExchange: buildTokenExchangeConfig(),
       oauthSts: oauthStsConfig,
+      a2aServer: a2aServerConfig,
       anthropicApiKey: llmConfig.anthropicApiKey,
       anthropicModel: llmConfig.anthropicModel,
       enableLLM: true,
@@ -388,6 +410,7 @@ function buildAgentConfig(): Omit<AgentConfig, 'idToken' | 'userContext'> | null
       version: '1.0.0',
       tokenExchange: buildTokenExchangeConfig(),
       oauthSts: oauthStsConfig,
+      a2aServer: a2aServerConfig,
       awsRegion: llmConfig.awsRegion,
       awsAccessKeyId: llmConfig.awsAccessKeyId,
       awsSecretAccessKey: llmConfig.awsSecretAccessKey,
@@ -496,6 +519,7 @@ export class Agent {
     content: string | Array<any>;
   }> = [];
   private oauthStsHandler: OAuthStsHandler | null = null;
+  private a2aHandler: A2AServerHandler | null = null;
   /** Pending OAuth-STS consents from the last connect() call. Drained by /api/chat. */
   private pendingConsents: PendingConsent[] = [];
 
@@ -527,6 +551,12 @@ export class Agent {
     // resource indicator, different managed connection in Okta).
     if (config.oauthSts) {
       this.oauthStsHandler = new OAuthStsHandler(config.oauthSts);
+    }
+
+    // A2A server connection (agent0 → Agent B). Contributes one LLM tool and
+    // performs the first hop (ID-JAG → access token for Agent B's a2a-server).
+    if (config.a2aServer) {
+      this.a2aHandler = new A2AServerHandler(config.a2aServer);
     }
 
     // Initialize LLM client - Priority: Anthropic Direct > AWS Bedrock
@@ -946,13 +976,14 @@ export class Agent {
 
   async processUserInput(
     input: string,
-    userContext?: UserContext | null
+    userContext?: UserContext | null,
+    onProgress?: ProgressFn
   ): Promise<{ success: boolean; message: string; data?: any; toolResults?: any[] }> {
     if (!this.anthropic && !this.bedrockClient) {
       throw new Error('LLM client not initialized');
     }
     try {
-      return await this.processWithLLM(input, userContext);
+      return await this.processWithLLM(input, userContext, onProgress);
     } catch (error: any) {
       return {
         success: false,
@@ -963,8 +994,10 @@ export class Agent {
 
   private async processWithLLM(
     userMessage: string,
-    userContext?: UserContext | null
+    userContext?: UserContext | null,
+    onProgress?: ProgressFn
   ): Promise<{ success: boolean; message: string; data?: any; toolResults?: any[] }> {
+    const emit: ProgressFn = onProgress ?? (() => {});
     try {
       // Add user message to conversation history
       this.conversationHistory.push({
@@ -982,6 +1015,11 @@ export class Agent {
         },
       }));
 
+      // A2A (non-MCP) tool: delegate to the downstream Task Agent (Agent B).
+      if (this.a2aHandler) {
+        tools.push(this.a2aHandler.getTool());
+      }
+
       // Create system message with context.
       // Tool list is fully derived from connected MCPs' list_tools responses —
       // no hardcoded tool descriptors. GitHub MCP, Todo0 MCP, etc. all register
@@ -989,6 +1027,10 @@ export class Agent {
       let systemMessage = `You are a helpful AI assistant with access to the following MCP tools: ${this.availableTools.map(t => t.name).join(', ') || '(none connected)'}.
 
 When the user asks to do something, analyze their request and call the appropriate tool with the correct parameters. If a tool you would need isn't in the list, explain that capability isn't currently available. Always be helpful and conversational; ask for clarification when needed.`;
+
+      if (this.a2aHandler) {
+        systemMessage += `\n\nYou can also delegate work to a downstream "Task Agent" via the ${A2A_TOOL_NAME} tool. When the user explicitly asks the "task agent" (or "Agent B") to add or list their todos, call ${A2A_TOOL_NAME} with the task text. The Task Agent acts on the user's behalf with the user's own identity preserved.`;
+      }
 
       // Add user context if available
       if (userContext) {
@@ -1016,6 +1058,7 @@ The todos you manage belong to this user.`;
       const toolResults: any[] = [];
       let responseMessage = '';
 
+      emit({ kind: 'thinking' });
       let response = this.anthropic
         ? await this.callAnthropicAPI(systemMessage, tools)
         : await this.callBedrockAPI(systemMessage, tools);
@@ -1044,11 +1087,39 @@ The todos you manage belong to this user.`;
         let pendingConsentReturn: { name: string; input: any; uri: string; msg?: string } | null = null;
 
         for (const block of toolUseBlocks) {
+          // A2A (non-MCP) path: delegate to the downstream Task Agent (Agent B).
+          if (block.name === A2A_TOOL_NAME && this.a2aHandler) {
+            emit({ kind: 'tool', tool: block.name, phase: 'start', detail: 'delegating to Agent B' });
+            let a2aResult: any;
+            try {
+              const task = (block.input?.task ?? '').toString();
+              const { text, tokenChain } = await this.a2aHandler.callAgent(
+                this.config.idToken,
+                task,
+                (text: string) => emit({ kind: 'note', text }),
+              );
+              a2aResult = { success: true, text, tokenChain };
+              emit({ kind: 'tool', tool: block.name, phase: 'done', ok: true });
+            } catch (err: any) {
+              a2aResult = { success: false, error: err?.message || String(err) };
+              emit({ kind: 'tool', tool: block.name, phase: 'done', ok: false });
+            }
+            toolResults.push({ tool: block.name, arguments: block.input, result: a2aResult });
+            toolResultBlocks.push({
+              type: 'tool_result',
+              tool_use_id: block.id,
+              content: JSON.stringify(a2aResult),
+            });
+            continue;
+          }
+
           // GitHub OIN (non-MCP) path
           if ((block.name === 'github_comment_on_pr' || block.name === 'github_list_repos') && this.oauthStsHandler) {
+            emit({ kind: 'tool', tool: block.name, phase: 'start' });
             const githubResult = await this.handleGitHubTool(block.name, block.input);
 
             if (githubResult.interaction_required) {
+              emit({ kind: 'tool', tool: block.name, phase: 'done', ok: false });
               pendingConsentReturn = {
                 name: block.name,
                 input: block.input,
@@ -1058,6 +1129,7 @@ The todos you manage belong to this user.`;
               break;
             }
 
+            emit({ kind: 'tool', tool: block.name, phase: 'done', ok: githubResult.result?.success !== false });
             toolResults.push({ tool: block.name, arguments: block.input, result: githubResult.result });
             toolResultBlocks.push({
               type: 'tool_result',
@@ -1068,9 +1140,11 @@ The todos you manage belong to this user.`;
           }
 
           // MCP tool path (Todo0, GitHub MCP, ...)
+          emit({ kind: 'tool', tool: block.name, phase: 'start' });
           let result: any;
           try {
             result = await this.callTool(block.name, block.input);
+            emit({ kind: 'tool', tool: block.name, phase: 'done', ok: result?.isError !== true });
           } catch (err: any) {
             // Feed the error back to the LLM as a tool_result so the model
             // can recover or apologize — avoids leaving an orphan tool_use.
@@ -1078,6 +1152,7 @@ The todos you manage belong to this user.`;
               isError: true,
               content: [{ type: 'text', text: `Tool "${block.name}" failed: ${err?.message || String(err)}` }],
             };
+            emit({ kind: 'tool', tool: block.name, phase: 'done', ok: false });
           }
 
           let parsedResult: any = {};
@@ -1127,6 +1202,7 @@ The todos you manage belong to this user.`;
         }
 
         // Next round.
+        emit({ kind: 'thinking' });
         response = this.anthropic
           ? await this.callAnthropicAPI(systemMessage, tools)
           : await this.callBedrockAPI(systemMessage, tools);
@@ -1317,6 +1393,14 @@ The todos you manage belong to this user.`;
 
   isLLMEnabled(): boolean {
     return this.anthropic !== null || this.bedrockClient !== null;
+  }
+
+  // ============================================================================
+  // A2A Server (agent-to-agent) Accessor
+  // ============================================================================
+
+  getA2AServerHandler(): A2AServerHandler | null {
+    return this.a2aHandler;
   }
 
   // ============================================================================

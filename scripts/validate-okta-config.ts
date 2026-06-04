@@ -212,6 +212,54 @@ async function validateEnvFiles(): Promise<ValidationResult> {
 
 
 /**
+ * Test: Validate A2A configuration (only runs when agentb/.env.agentb exists).
+ * Checks the agentb env has required vars and the A2A authorization server is reachable.
+ */
+async function validateA2A(): Promise<ValidationResult> {
+  const agentbEnvPath = 'packages/agentb/.env.agentb';
+  const agentbEnv = loadEnvFile(agentbEnvPath);
+
+  const required = [
+    'AGENTB_PORT',
+    'AGENTB_RESOURCE_URL',
+    'OKTA_DOMAIN',
+    'AGENTB_AI_AGENT_ID',
+    'AGENTB_AI_AGENT_PRIVATE_KEY_FILE',
+    'AGENTB_AI_AGENT_PRIVATE_KEY_KID',
+    'A2A_AUTHORIZATION_SERVER',
+    'MCP_SERVER_URL',
+    'MCP_AUTHORIZATION_SERVER',
+  ];
+  const missingVars = required.filter((k) => !agentbEnv[k]);
+  if (missingVars.length > 0) {
+    return { passed: false, message: 'Missing required agentb env variables', details: { missingVars } };
+  }
+
+  // Agent B private key present + valid
+  const keyPath = path.resolve('packages/agentb', agentbEnv.AGENTB_AI_AGENT_PRIVATE_KEY_FILE);
+  if (!fs.existsSync(keyPath)) {
+    return { passed: false, message: `Agent B private key not found: ${keyPath}` };
+  }
+  try {
+    await jose.importPKCS8(fs.readFileSync(keyPath, 'utf8'), 'RS256');
+  } catch {
+    return { passed: false, message: 'Agent B private key is invalid or corrupted' };
+  }
+
+  // A2A authorization server reachable
+  try {
+    const response = await axios.get(`${agentbEnv.A2A_AUTHORIZATION_SERVER}/.well-known/openid-configuration`);
+    return {
+      passed: true,
+      message: 'A2A configuration is valid and A2A AS is reachable',
+      details: { issuer: response.data.issuer, agentbResourceUrl: agentbEnv.AGENTB_RESOURCE_URL },
+    };
+  } catch (error: any) {
+    return { passed: false, message: `Failed to reach A2A AS: ${error.message}` };
+  }
+}
+
+/**
  * Main validation function
  */
 async function validate() {
@@ -235,6 +283,11 @@ async function validate() {
     { name: 'Private Key', fn: () => validatePrivateKey(agent0AgentEnv) },
     { name: 'MCP Auth Server', fn: () => validateMcpAS(todo0McpEnv) },
   ];
+
+  // A2A is optional — only validate it when the agentb env file is present.
+  if (fs.existsSync('packages/agentb/.env.agentb')) {
+    tests.push({ name: 'A2A Identity Chaining', fn: () => validateA2A() });
+  }
 
   let passedCount = 0;
   let failedCount = 0;

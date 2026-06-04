@@ -127,7 +127,7 @@
         <input type="text" name="title" placeholder="New todo" required />
         <button type="submit">Add</button>
       </form>
-      <ul>
+      <ul id="todoList">
         <% todos.forEach(todo => { %>
           <li class="<%= todo.completed ? 'done' : '' %>">
             <span style="flex:1"><%= todo.title %></span>
@@ -142,6 +142,7 @@
           </li>
         <% }) %>
       </ul>
+      <p id="liveHint" style="font-size:0.8em;color:#888;margin:0.2em 0 0;">🟢 live — new todos appear automatically</p>
       <form action="/logout" method="POST">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>" />
         <button type="submit" class="logout-btn">Logout</button>
@@ -156,6 +157,53 @@
       document.execCommand('copy');
       alert('Access token copied to clipboard!');
     }
+
+    // ── Live updates ─────────────────────────────────────────────────────────
+    // Poll the JSON todos endpoint so todos added out-of-band (e.g. by agent0
+    // or Agent B via the MCP server — a separate process sharing the DB) show
+    // up without a manual refresh. Re-renders only when the list changes.
+    (function () {
+      const list = document.getElementById('todoList');
+      if (!list) return; // not authenticated
+      const csrf = (document.querySelector('meta[name="csrf-token"]') || {}).content || '';
+
+      function esc(s) {
+        const d = document.createElement('div');
+        d.textContent = s == null ? '' : String(s);
+        return d.innerHTML;
+      }
+
+      let lastSig = null;
+      function render(todos) {
+        const sig = JSON.stringify(todos.map((t) => [t.id, t.title, t.completed]));
+        if (sig === lastSig) return;
+        lastSig = sig;
+        list.innerHTML = todos.map((t) => `
+          <li class="${t.completed ? 'done' : ''}">
+            <span style="flex:1">${esc(t.title)}</span>
+            <form action="/todos/${t.id}/complete" method="POST" style="display:inline">
+              <input type="hidden" name="_csrf" value="${esc(csrf)}" />
+              <button type="submit">${t.completed ? 'Undo' : 'Complete'}</button>
+            </form>
+            <form action="/todos/${t.id}/delete" method="POST" style="display:inline">
+              <input type="hidden" name="_csrf" value="${esc(csrf)}" />
+              <button type="submit">Delete</button>
+            </form>
+          </li>`).join('');
+      }
+
+      async function poll() {
+        try {
+          const r = await fetch('/todos', { credentials: 'include', headers: { Accept: 'application/json' } });
+          if (!r.ok) return;
+          const data = await r.json();
+          if (Array.isArray(data.todos)) render(data.todos);
+        } catch (_) { /* transient; try again next tick */ }
+      }
+
+      setInterval(poll, 1500);
+      poll();
+    })();
   </script>
 </body>
 </html>

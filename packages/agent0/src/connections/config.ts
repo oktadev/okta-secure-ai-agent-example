@@ -12,6 +12,7 @@ const VALID_KINDS: ReadonlySet<ConnectionKind> = new Set<ConnectionKind>([
   'authorization_server',
   'application',
   'mcp_server',
+  'a2a_server',
 ]);
 
 let cached: Set<ConnectionKind> | null = null;

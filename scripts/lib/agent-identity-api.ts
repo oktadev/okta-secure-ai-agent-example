@@ -28,7 +28,16 @@ export interface RegisterAgentRequest {
     name: string;
     description: string;
   };
-  appId: string;
+  /**
+   * Link to an existing OIDC app (first-hop "linked app" model). Used by agent0.
+   */
+  appId?: string;
+  /**
+   * Resource URL (audience URI) for the agent's A2A server. When provided, Okta
+   * auto-creates a read-only a2a-server projection sharing the agent's primary key,
+   * making the agent a valid downstream target for agent-to-agent identity chaining.
+   */
+  resourceUrl?: string;
 }
 
 export interface AgentOperationResult {
@@ -66,6 +75,44 @@ export interface CreateVaultSecretConnectionRequest {
   secret: {
     orn: string;
   };
+}
+
+/**
+ * Managed connection targeting an A2A server (agent-to-agent identity chaining).
+ * The output token type is an ID-JAG; the resource is the target agent's a2a-server.
+ */
+export interface CreateA2aConnectionRequest {
+  connectionType: 'IDENTITY_ASSERTION_A2A_SERVER';
+  a2aServer: {
+    orn: string;
+  };
+  authorizationServer: {
+    orn: string;
+  };
+  scopeCondition: string;
+  scopes: string[];
+}
+
+/**
+ * Delegation link — inbound policy declaring whose tokens an agent will accept as
+ * a subject_token. Generalizes/replaces the legacy single `appId` linked-app model.
+ */
+export interface CreateDelegationLinkRequest {
+  from: {
+    type: 'OKTA_AUTHORIZATION_SERVER';
+    clientOrn: string;
+    tokenType: 'ACCESS_TOKEN' | 'ID_TOKEN';
+  };
+  to: {
+    resourceOrn: string;
+  };
+}
+
+export interface DelegationLink {
+  id: string;
+  from?: Record<string, unknown>;
+  to?: Record<string, unknown>;
+  [key: string]: any;
 }
 
 export interface AgentConnection {
@@ -206,7 +253,7 @@ export class AgentIdentityAPIClient {
       if (operation.status === 'COMPLETED') {
         return operation;
       } else if (operation.status === 'FAILED') {
-        throw new Error('Agent registration failed');
+        throw new Error(`Operation failed: ${operation.type || 'unknown operation'}`);
       }
     }
 
@@ -442,6 +489,146 @@ export class AgentIdentityAPIClient {
   }
 
   // ==========================================================================
+  // A2A SERVERS & DELEGATION LINKS (agent-to-agent identity chaining)
+  // ==========================================================================
+
+  /**
+   * Associate an Okta custom authorization server with an agent's A2A server.
+   * After this, the a2a-server's resourceUrl is accepted as a `resource` for the
+   * custom AS, enabling it to mint access tokens scoped to that agent.
+   *
+   * The a2aServerId is the same id as the agent identity. The write is async
+   * (202 + resource-servers operation); we poll to completion when needed.
+   */
+  async addAuthorizationServerToA2aServer(
+    a2aServerId: string,
+    authServerOrn: string
+  ): Promise<void> {
+    const body = { type: 'OKTA', orn: authServerOrn };
+    try {
+      const response = await axios.post(
+        `${this.baseUrl}/resource-servers/api/v1/a2a-servers/${a2aServerId}/authorization-servers`,
+        body,
+        this.getAxiosConfig()
+      );
+
+      if (response.status === 202) {
+        const operationUrl = response.headers['location'];
+        if (operationUrl) {
+          await this.pollOperation(operationUrl);
+        }
+      }
+    } catch (error: any) {
+      this.handleAxiosError(error, 'Add authorization server to A2A server', body);
+    }
+  }
+
+  /**
+   * Retrieve an agent's A2A server (the read-only resource projection). Returns
+   * its canonical `orn` and `resourceUrl` as stored by Okta — prefer these over
+   * client-constructed values to avoid ORN-format drift.
+   */
+  async getA2aServer(a2aServerId: string): Promise<{ a2aServerId: string; orn: string; resourceUrl: string; [k: string]: any }> {
+    try {
+      const response = await axios.get(
+        `${this.baseUrl}/resource-servers/api/v1/a2a-servers/${a2aServerId}`,
+        this.getAxiosConfig()
+      );
+      return response.data;
+    } catch (error: any) {
+      this.handleAxiosError(error, 'Get A2A server');
+    }
+  }
+
+  /**
+   * List authorization servers linked to an agent's A2A server.
+   */
+  async listA2aServerAuthorizationServers(a2aServerId: string): Promise<Array<{ id: string; orn?: string; issuer?: string }>> {
+    try {
+      const response = await axios.get(
+        `${this.baseUrl}/resource-servers/api/v1/a2a-servers/${a2aServerId}/authorization-servers`,
+        this.getAxiosConfig()
+      );
+      return (response.data?.data || []) as Array<{ id: string; orn?: string; issuer?: string }>;
+    } catch (error: any) {
+      this.handleAxiosError(error, 'List A2A server authorization servers');
+    }
+  }
+
+  /**
+   * Create a delegation link (inbound policy) declaring which caller's tokens the
+   * target agent will accept as a subject_token.
+   * Returns the created link (including its id, when present) for rollback tracking.
+   */
+  async createDelegationLink(request: CreateDelegationLinkRequest): Promise<DelegationLink> {
+    try {
+      const response = await axios.post(
+        `${this.baseUrl}/workload-principals/api/v1/delegation-links`,
+        request,
+        this.getAxiosConfig()
+      );
+      return response.data as DelegationLink;
+    } catch (error: any) {
+      this.handleAxiosError(error, 'Create delegation link', request);
+    }
+  }
+
+  /**
+   * List delegation links (best-effort; used for rollback discovery).
+   */
+  async listDelegationLinks(): Promise<DelegationLink[]> {
+    try {
+      const response = await axios.get(
+        `${this.baseUrl}/workload-principals/api/v1/delegation-links?limit=50`,
+        this.getAxiosConfig()
+      );
+      return (response.data?.data || []) as DelegationLink[];
+    } catch (error: any) {
+      this.handleAxiosError(error, 'List delegation links');
+    }
+  }
+
+  /**
+   * Delete a delegation link by id.
+   */
+  async deleteDelegationLink(linkId: string): Promise<void> {
+    try {
+      await axios.delete(
+        `${this.baseUrl}/workload-principals/api/v1/delegation-links/${linkId}`,
+        this.getAxiosConfig()
+      );
+    } catch (error: any) {
+      this.handleAxiosError(error, 'Delete delegation link');
+    }
+  }
+
+  /**
+   * Create a managed connection from an agent to a target agent's A2A server
+   * (connectionType IDENTITY_ASSERTION_A2A_SERVER). This is the outbound plumbing
+   * that lets the source agent obtain an ID-JAG for the target agent's resource.
+   */
+  async createA2aConnection(
+    agentId: string,
+    request: CreateA2aConnectionRequest
+  ): Promise<AgentConnection> {
+    try {
+      const response = await axios.post(
+        `${this.baseUrl}/workload-principals/api/v1/ai-agents/${agentId}/connections`,
+        request,
+        this.getAxiosConfig()
+      );
+      return response.data as AgentConnection;
+    } catch (error: any) {
+      // Callers may probe this type and fall back (older org builds reject
+      // IDENTITY_ASSERTION_A2A_SERVER). Throw quietly — no verbose dump — so the
+      // expected fallback path doesn't look like a hard failure.
+      const status = error?.response?.status;
+      const summary = error?.response?.data?.errorSummary || error.message;
+      throw new Error(`Create A2A connection failed${status ? ` (HTTP ${status})` : ''}: ${summary}`);
+    }
+  }
+
+  // ==========================================================================
   // UTILITIES
   // ==========================================================================
 
@@ -636,4 +823,28 @@ export function constructAuthServerORN(orgId: string, authServerId: string): str
  */
 export function constructPamSecretORN(orgId: string, secretId: string): string {
   return `orn:okta:pam:${orgId}:secrets:${secretId}`;
+}
+
+/**
+ * Construct an Okta Resource Name (ORN) for an agent's A2A server.
+ * The a2a-server shares the agent's primary key. NOTE: the path segment is
+ * `a2a-servers` (plural), matching the API's returned ORNs. Prefer reading the
+ * canonical ORN from `getA2aServer()` where possible.
+ */
+export function constructA2aServerORN(orgId: string, agentId: string): string {
+  return `orn:okta:directory:${orgId}:resource-servers:a2a-servers:${agentId}`;
+}
+
+/**
+ * Construct an Okta Resource Name (ORN) for an AI agent (workload principal).
+ */
+export function constructAgentORN(orgId: string, agentId: string): string {
+  return `orn:okta:directory:${orgId}:workload-principals:ai-agents:${agentId}`;
+}
+
+/**
+ * Construct an Okta Resource Name (ORN) for an OIDC application instance.
+ */
+export function constructAppORN(orgId: string, clientId: string): string {
+  return `orn:okta:idp:${orgId}:apps:oidc:${clientId}`;
 }

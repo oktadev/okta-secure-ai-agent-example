@@ -53,6 +53,27 @@ export interface BootstrapConfig {
 
   // LLM Configuration (optional)
   llmConfig?: LLMConfig;
+
+  // A2A identity chaining (optional — present only when A2A provisioning ran)
+  a2a?: A2AConfig;
+}
+
+/**
+ * Configuration for the A2A (agent-to-agent) second hop: agent0 → Agent B → todo0.
+ */
+export interface A2AConfig {
+  // Agent B (the dual-natured downstream agent)
+  agentbAgentId: string;
+  agentbPrivateKeyFile: string;
+  agentbKeyId: string;
+  agentbResourceUrl: string;   // a2a-server audience / resource indicator
+  agentbPort: number;          // local A2A transport port
+  agentbServerUrl: string;     // local A2A transport URL (e.g. http://localhost:5005)
+  agentbMcpScopes: string[];   // scopes Agent B requests for the todo0 hop
+
+  // A2A authorization server (protects Agent B; used for the agent0 → Agent B hop)
+  a2aAuthServerId: string;
+  a2aScopes: string[];         // e.g. ['agent.invoke']
 }
 
 /**
@@ -151,7 +172,80 @@ AI_AGENT_TODO_MCP_SERVER_SCOPES_TO_REQUEST=${config.mcpScopes.join(' ')}
 # MCP Authorization Server (for todo0 MCP server)
 MCP_AUTHORIZATION_SERVER=https://${config.oktaDomain}/oauth2/${config.mcpAuthServerId}
 MCP_AUTHORIZATION_SERVER_TOKEN_ENDPOINT=https://${config.oktaDomain}/oauth2/${config.mcpAuthServerId}/v1/token
+${config.a2a ? generateAgent0A2ASection(config) : ''}
+`;
+}
 
+/**
+ * Generate the A2A (agent-to-agent) section appended to agent0's .env.agent.
+ * Enables agent0 to obtain an access token for Agent B and call it over A2A.
+ * Exported so the standalone `setup:a2a` script can append it to an existing
+ * .env.agent without rewriting the rest of the file.
+ */
+export function generateAgent0A2ASection(config: BootstrapConfig): string {
+  const a2a = config.a2a!;
+  return `
+# ============================================================================
+# AGENT - A2A IDENTITY CHAINING (agent0 → Agent B)
+# ============================================================================
+# A2A transport endpoint (Agent B's local A2A protocol server)
+A2A_SERVER_URL=${a2a.agentbServerUrl}
+# Resource indicator (Agent B's a2a-server resourceUrl / audience)
+A2A_RESOURCE_INDICATOR=${a2a.agentbResourceUrl}
+# A2A authorization server that protects Agent B
+A2A_AUTHORIZATION_SERVER=https://${config.oktaDomain}/oauth2/${a2a.a2aAuthServerId}
+A2A_AUTHORIZATION_SERVER_TOKEN_ENDPOINT=https://${config.oktaDomain}/oauth2/${a2a.a2aAuthServerId}/v1/token
+A2A_SCOPES_TO_REQUEST=${a2a.a2aScopes.join(' ')}
+# Agent B's Okta agent id (for the Connections panel)
+OKTA_A2A_SERVER_ID=${a2a.agentbAgentId}
+`;
+}
+
+/**
+ * Generate .env.agentb for the agentb package (the dual-natured downstream agent).
+ * Agent B validates inbound A2A calls (against the A2A AS) and performs its own
+ * second-hop token exchange to reach todo0's MCP server.
+ */
+export function generateAgentbEnv(config: BootstrapConfig): string {
+  const a2a = config.a2a;
+  if (!a2a) {
+    throw new Error('generateAgentbEnv called without A2A config');
+  }
+
+  const llmSection = generateLLMConfigSection(config.llmConfig);
+
+  return `# ============================================================================
+# AGENT B — SERVER CONFIGURATION
+# ============================================================================
+AGENTB_PORT=${a2a.agentbPort}
+# This agent's a2a-server resourceUrl (the audience inbound tokens must carry)
+AGENTB_RESOURCE_URL=${a2a.agentbResourceUrl}
+
+${llmSection}
+
+# ============================================================================
+# AGENT B — IDENTITY (its own workload-principal credentials)
+# ============================================================================
+OKTA_DOMAIN=${config.oktaDomain}
+AGENTB_AI_AGENT_ID=${a2a.agentbAgentId}
+AGENTB_AI_AGENT_PRIVATE_KEY_FILE=${a2a.agentbPrivateKeyFile}
+AGENTB_AI_AGENT_PRIVATE_KEY_KID=${a2a.agentbKeyId}
+
+# ============================================================================
+# AGENT B — INBOUND VALIDATION (agent0 → Agent B)
+# ============================================================================
+# The A2A authorization server that issued the inbound access token. Agent B
+# verifies issuer + aud (= AGENTB_RESOURCE_URL) + scope (agent.invoke).
+A2A_AUTHORIZATION_SERVER=https://${config.oktaDomain}/oauth2/${a2a.a2aAuthServerId}
+
+# ============================================================================
+# AGENT B — OUTBOUND SECOND HOP (Agent B → todo0 MCP)
+# ============================================================================
+MCP_SERVER_URL=http://localhost:5002/mcp
+MCP_AUTHORIZATION_SERVER=https://${config.oktaDomain}/oauth2/${config.mcpAuthServerId}
+MCP_AUTHORIZATION_SERVER_TOKEN_ENDPOINT=https://${config.oktaDomain}/oauth2/${config.mcpAuthServerId}/v1/token
+MCP_RESOURCE_INDICATOR=${config.mcpAudience}
+AGENTB_MCP_SCOPES_TO_REQUEST=${a2a.agentbMcpScopes.join(' ')}
 `;
 }
 

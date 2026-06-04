@@ -21,6 +21,11 @@ export interface ScopeConfig {
   name: string;
   description: string;
   displayName?: string;
+  /**
+   * Consent requirement. Defaults to 'REQUIRED'. Agent-to-agent scopes (e.g.
+   * `agent.invoke`) typically use 'IMPLICIT' so no interactive consent is prompted.
+   */
+  consent?: 'REQUIRED' | 'IMPLICIT' | 'FLEXIBLE';
 }
 
 export interface PolicyConfig {
@@ -127,7 +132,7 @@ export class OktaAPIClient {
           name: scope.name,
           description: scope.description,
           displayName: scope.displayName || scope.name,
-          consent: 'REQUIRED',
+          consent: scope.consent || 'REQUIRED',
         },
       });
       createdScopes.push(oAuth2Scope);
@@ -155,6 +160,50 @@ export class OktaAPIClient {
       },
     });
     return policy;
+  }
+
+  /**
+   * Find an authorization server policy by name. Returns its id, or null if
+   * not found. Used by the standalone A2A setup to locate the existing todo0
+   * MCP policy without relying on the bootstrap state file.
+   */
+  async getPolicyIdByName(authServerId: string, name: string): Promise<string | null> {
+    const policies = await this.client.authorizationServerApi.listAuthorizationServerPolicies({ authServerId });
+    for await (const policy of policies) {
+      if (policy && policy.name === name && policy.id) {
+        return policy.id;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Add a client to an existing authorization server policy's client allowlist.
+   * Used to let an additional agent (e.g. Agent B in A2A chaining) obtain tokens
+   * from a custom AS whose policy was originally scoped to a single client.
+   * No-op if the client is already included.
+   */
+  async addClientToPolicy(authServerId: string, policyId: string, clientId: string): Promise<void> {
+    const policy: any = await this.client.authorizationServerApi.getAuthorizationServerPolicy({
+      authServerId,
+      policyId,
+    });
+
+    const include: string[] = policy?.conditions?.clients?.include ?? [];
+    if (include.includes(clientId)) {
+      return;
+    }
+
+    policy.conditions = {
+      ...(policy.conditions || {}),
+      clients: { include: [...include, clientId] },
+    };
+
+    await this.client.authorizationServerApi.replaceAuthorizationServerPolicy({
+      authServerId,
+      policyId,
+      policy,
+    });
   }
 
   /**

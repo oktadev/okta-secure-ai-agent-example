@@ -23,6 +23,7 @@
   - [1. Authorization Server connections](#1-authorization-server-connections)
   - [2. Application connections (GitHub REST API)](#2-application-connections-github-rest-api)
   - [3. MCP Server connections (Todo0 and GitHub MCP)](#3-mcp-server-connections-todo0-and-github-mcp)
+  - [4. A2A Server connections (Agent B)](#4-a2a-server-connections-agent-b--agent-to-agent-identity-chaining)
   - [Connections panel](#connections-panel)
 - [Packages](#packages)
 - [Setup](#setup)
@@ -37,6 +38,7 @@
   - [1. ID-JAG → MCP access token (Todo0)](#1-id-jag--mcp-access-token-todo0)
   - [2. Step-up auth (expanded MCP scopes)](#2-step-up-auth-expanded-mcp-scopes)
   - [3. OAuth STS brokered consent (GitHub)](#3-oauth-sts-brokered-consent-github)
+  - [4. A2A identity chaining (Agent B)](#4-a2a-identity-chaining-agent-b--the-second-hop)
 - [Notes](#notes)
 
 ## Overview
@@ -156,6 +158,7 @@ graph TB
 - JWT validation and scope-based authorization
 - OAuth STS brokered consent for third-party integrations (e.g., GitHub)
 - **Multi-MCP**: agent0 connects to Todo0 and GitHub MCP servers concurrently, each with its own auth strategy
+- **A2A identity chaining** (optional): agent0 → Agent B → todo0 over the A2A protocol, preserving the user's identity across the second hop
 - **Managed Connections panel**: live view of every Okta-managed connection wired on the agent
 - pnpm workspace structure
 
@@ -173,6 +176,7 @@ surfaces their live status in an in-app panel.
 | `authorization_server` | Authorization Server | The AS that mints the ID-JAG the agent exchanges for MCP access tokens |
 | `application` | Application | A third-party ISV (e.g., GitHub) the agent reaches via Okta-brokered OAuth STS consent |
 | `mcp_server` | MCP Server | An MCP server registered in Okta (Todo0, GitHub MCP) |
+| `a2a_server` | A2A Server | A downstream **agent** (Agent B) the agent reaches via agent-to-agent identity chaining (optional) |
 
 `secret` and `service_account` are out of scope for this sample.
 
@@ -295,6 +299,47 @@ vars — the Connections panel picks it up automatically via
 > `http://localhost:5002/mcp` via a tunnel (ngrok, cloudflared) and repeat
 > the steps above, setting `OKTA_MCP_SERVER_ID` and
 > `MCP_RESOURCE_INDICATOR` instead.
+
+### 4. A2A Server connections (Agent B) — agent-to-agent identity chaining
+
+An A2A Server connection makes a **downstream agent** a first-class target. The
+agent obtains an ID-JAG for the target agent's `a2a-server` resource, redeems it
+for an access token, and calls that agent over the **A2A protocol** — preserving
+the original user's identity. The downstream agent (a dual-natured
+principal + resource) then performs its *own* hop to a further resource.
+
+**In this sample:** `agent0 → Agent B → todo0`. agent0 delegates a task to
+**Agent B** (`packages/agentb`, port 5005) over A2A. Agent B validates the
+inbound token, performs its own ID-JAG exchange, and manages the user's todos in
+todo0 — the user's `sub` is preserved at every hop.
+
+This is **optional** and gated behind the `SECURE_AI_A2A_SERVERS` feature.
+
+**Developer steps:**
+
+A2A is **additive** — it layers onto an existing install without re-running
+`bootstrap:okta` (so your base resources and `.env` files are left intact).
+
+1. Ensure `OKTA_FOR_AI_AGENTS` and `SECURE_AI_A2A_SERVERS` are enabled on your org.
+2. Run `pnpm run setup:a2a`. It reads your existing config and provisions only
+   the new A2A resources: Agent B (registered with a `resourceUrl`), a dedicated
+   A2A authorization server, the A2A AS ↔ Agent B association, a delegation link
+   `agent0 → Agent B`, and the two managed connections. It then **appends** the
+   `A2A_*` vars to `packages/agent0/.env.agent` and writes
+   `packages/agentb/.env.agentb`. New resources are tracked in
+   `.a2a-setup-state.json`.
+3. `pnpm build && pnpm run dev` (now also starts Agent B on port 5005).
+4. To remove just the A2A pieces later (base install untouched):
+   `pnpm run cleanup:a2a`.
+
+| Connection | Type | Resource |
+|------------|------|----------|
+| agent0 → Agent B | `IDENTITY_ASSERTION_A2A_SERVER` | Agent B's a2a-server `resourceUrl` |
+| Agent B → todo0 | `IDENTITY_ASSERTION_CUSTOM_AS` | todo0 MCP resource (reuses the Todo MCP AS) |
+
+> **Inbound is a delegation link, not `appId`.** Whose tokens Agent B accepts as
+> a subject is declared by a delegation link (`from` agent0 → `to` Agent B), the
+> generalized replacement for the legacy linked-app model.
 
 ### Connections panel
 
@@ -474,6 +519,7 @@ Or run individually in separate terminals:
 pnpm run start:todo0   # Start todo0 app server (port 5001)
 pnpm run start:mcp     # Start todo0 MCP server (port 5002)
 pnpm run start:agent0  # Start agent0 application (port 3000)
+pnpm run start:agentb  # Start Agent B (port 5005; no-op unless A2A is provisioned)
 ```
 
 ## Try it out
@@ -551,6 +597,34 @@ comment "LGTM" on https://github.com/<your-org>/<your-repo>/pull/1
   `OAuth STS Application` + `Github MCP Server` cards flip to `LIVE`.
 - The cached ISV token survives until its TTL; subsequent PR-comment
   prompts run without a second consent prompt.
+
+### 4. A2A identity chaining (Agent B) — the second hop
+
+> Requires the A2A setup from
+> [A2A Server connections](#4-a2a-server-connections-agent-b--agent-to-agent-identity-chaining)
+> (run `pnpm run setup:a2a` once, additively). Agent B runs on port 5005 as
+> part of `pnpm run dev`.
+
+agent0 delegates a task to **Agent B** over the A2A protocol. agent0 mints an
+access token for Agent B's `a2a-server` (ID-JAG → access token), calls Agent B's
+JSON-RPC endpoint, and Agent B performs its *own* exchange to reach todo0 — all
+as the original user.
+
+Try:
+
+```
+ask the task agent to add "prep the Q3 review" to my todos
+```
+```
+ask the task agent to list my todos
+```
+
+**What to look for:**
+- The `A2A Agent` card flips to `LIVE` (alongside `Authorization Server` and
+  `Todo0 MCP Server`).
+- The todo created by Agent B belongs to **you** — the user identity is
+  preserved across both hops. The reply includes a token-chain summary where
+  `sub` is unchanged and `aud` narrows from Agent B → todo0.
 
 ## Notes
 

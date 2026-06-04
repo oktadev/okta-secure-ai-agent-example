@@ -77,6 +77,13 @@ export interface TokenExchangeConfig {
   authorizationServer: string;
   authorizationServerTokenEndpoint: string;
   agentScopes: string;
+  /**
+   * Optional RFC 8707 resource indicator. When set, it is sent on the token
+   * exchange so the authorization server scopes the token's audience to a
+   * specific resource (e.g. an A2A server's resourceUrl). Omitted for the
+   * single-audience todo0 MCP flow, where it is unnecessary.
+   */
+  resource?: string;
 }
 
 // ============================================================================
@@ -145,6 +152,9 @@ export class TokenExchangeHandler {
     formData.append('subject_token', idToken);
     formData.append('subject_token_type', 'urn:ietf:params:oauth:token-type:id_token');
     formData.append('audience', this.config.authorizationServer);
+    if (this.config.resource) {
+      formData.append('resource', this.config.resource);
+    }
     formData.append('scope', scopes || this.config.agentScopes);
     formData.append('client_assertion_type', 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer');
     formData.append('client_assertion', clientAssertion);

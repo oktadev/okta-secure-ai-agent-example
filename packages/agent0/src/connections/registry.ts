@@ -43,6 +43,23 @@ function isApplicationConfigured(): boolean {
   return !!process.env.OAUTH_STS_RESOURCE;
 }
 
+/**
+ * A2A server connection is configured when the A2A transport + authorization
+ * server env vars are present (alongside the shared agent identity).
+ */
+function isA2aServerConfigured(): boolean {
+  return !!(
+    process.env.A2A_SERVER_URL &&
+    process.env.A2A_RESOURCE_INDICATOR &&
+    process.env.A2A_AUTHORIZATION_SERVER &&
+    process.env.A2A_AUTHORIZATION_SERVER_TOKEN_ENDPOINT &&
+    process.env.OKTA_DOMAIN &&
+    process.env.AI_AGENT_ID &&
+    process.env.AI_AGENT_PRIVATE_KEY_FILE &&
+    process.env.AI_AGENT_PRIVATE_KEY_KID
+  );
+}
+
 // ============================================================================
 // Per-kind status builders
 // ============================================================================
@@ -107,6 +124,28 @@ function buildMcpServerStatus(agent: Agent | null): ConnectionStatus {
   };
 }
 
+function buildA2aServerStatus(agent: Agent | null): ConnectionStatus {
+  const configured = isA2aServerConfigured();
+  const handler = agent?.getA2AServerHandler() ?? null;
+  // "Connected" = agent0 has successfully obtained a token for Agent B and
+  // completed at least one A2A call this process lifetime.
+  const connected = !!(configured && handler && handler.isAuthorized());
+  return {
+    kind: 'a2a_server',
+    configured,
+    connected,
+    details: configured
+      ? {
+          agentServerUrl: process.env.A2A_SERVER_URL,
+          resourceIndicator: process.env.A2A_RESOURCE_INDICATOR,
+          authorizationServer: process.env.A2A_AUTHORIZATION_SERVER,
+          registeredAtOkta: !!process.env.OKTA_A2A_SERVER_ID,
+          oktaAgentServerId: process.env.OKTA_A2A_SERVER_ID,
+        }
+      : undefined,
+  };
+}
+
 // ============================================================================
 // Public API
 // ============================================================================
@@ -131,5 +170,6 @@ export function buildConnectionStatuses(agent: Agent | null): ConnectionStatus[]
     buildAuthorizationServerStatus(agent),
     buildApplicationStatus(agent),
     buildMcpServerStatus(agent),
+    buildA2aServerStatus(agent),
   ].map(applyDisabledFlag);
 }

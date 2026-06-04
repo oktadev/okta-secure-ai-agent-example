@@ -300,6 +300,50 @@ export class AppServer {
         });
       }
     });
+
+    // Streaming chat endpoint (Server-Sent Events). Emits live `progress`
+    // events as the agent thinks, exchanges tokens, calls Agent B (A2A), and
+    // runs MCP tools — then a final `done` event with the full result. The
+    // non-streaming /api/chat above remains as a fallback.
+    this.app.post('/api/chat/stream', authMiddleware, async (req, res) => {
+      const { message } = req.body || {};
+      if (!message) {
+        return res.status(400).json({ success: false, error: 'Bad Request', message: 'message is required' });
+      }
+
+      const agent = await getAgentForSession(req);
+      if (!agent || !agent.isLLMEnabled()) {
+        return res.status(503).json({
+          success: false,
+          error: 'Service Unavailable',
+          message: 'LLM is not configured. Please set ANTHROPIC_API_KEY environment variable.',
+        });
+      }
+
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache, no-transform',
+        'Connection': 'keep-alive',
+        'X-Accel-Buffering': 'no',
+      });
+      const send = (obj: unknown) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
+
+      try {
+        const result = await agent.processUserInput(message, undefined, (evt) =>
+          send({ type: 'progress', payload: evt }),
+        );
+        const pendingConsents = agent.consumePendingConsents();
+        const finalResult = pendingConsents.length > 0
+          ? { ...result, data: { ...(result.data || {}), pending_consents: pendingConsents } }
+          : result;
+        send({ type: 'done', result: finalResult });
+      } catch (error: any) {
+        console.error('Chat stream error:', error);
+        send({ type: 'error', message: error.message || 'Internal Server Error' });
+      } finally {
+        res.end();
+      }
+    });
   }
 
   // ============================================================================

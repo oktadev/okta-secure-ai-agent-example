@@ -46,6 +46,67 @@ function summarizeToolResult(result) {
 }
 
 /**
+ * Walk a nested RFC 8693 `act` claim, collecting the chain of actor subjects.
+ * { sub:B, act:{ sub:A } } → ["B", "A"]
+ */
+function actChain(act) {
+    const subs = [];
+    let cur = act;
+    let guard = 0;
+    while (cur && typeof cur === 'object' && guard++ < 10) {
+        if (cur.sub) subs.push(String(cur.sub));
+        cur = cur.act;
+    }
+    return subs;
+}
+
+/**
+ * Render the A2A identity chain returned by Agent B (the token-chain summary).
+ * Demo-focused: shows that the same `sub` (user) flows through every hop while
+ * the `aud` narrows toward the final target — the heart of identity chaining.
+ */
+function renderTokenChain(chain) {
+    if (!chain || typeof chain !== 'object') return '';
+    const steps = [
+        { from: 'agent0', to: 'Agent B', kind: 'access token', tok: chain.inbound },
+        { from: 'Agent B', to: 'todo0 AS', kind: 'ID-JAG', tok: chain.idJag },
+        { from: 'Agent B', to: 'todo0', kind: 'access token', tok: chain.todoAccessToken },
+    ].filter((s) => s.tok && typeof s.tok === 'object');
+    if (!steps.length) return '';
+
+    const accent = 'rgba(120,160,255,.9)';
+    const fieldStyle = 'display:flex;gap:8px;font:12px/1.6 ui-monospace,Menlo,monospace;';
+    const kStyle = 'opacity:.55;min-width:30px;';
+
+    const nodeHtml = steps.map((s) => {
+        const t = s.tok || {};
+        const aud = Array.isArray(t.aud) ? t.aud.join(', ') : (t.aud || '—');
+        const acts = actChain(t.act);
+        const actLine = acts.length
+            ? `<div style="${fieldStyle}"><span style="${kStyle}">act</span><span style="word-break:break-all;">${escapeHtml(acts.join(' ← '))}</span></div>`
+            : '';
+        return `
+            <div style="position:relative;padding:0 0 16px 0;">
+                <span style="position:absolute;left:-24px;top:3px;width:11px;height:11px;border-radius:50%;background:${accent};box-shadow:0 0 0 3px rgba(127,127,127,.18);"></span>
+                <div style="font:600 12px/1.5 system-ui;margin-bottom:3px;">
+                    <span>${escapeHtml(s.from)}</span><span style="opacity:.5;"> → </span><span>${escapeHtml(s.to)}</span><span style="opacity:.5;font-weight:500;"> · ${escapeHtml(s.kind)}</span>
+                </div>
+                <div style="${fieldStyle}"><span style="${kStyle}">sub</span><span style="font-weight:700;color:${accent};word-break:break-all;">${escapeHtml(t.sub || '—')}</span></div>
+                <div style="${fieldStyle}"><span style="${kStyle}">aud</span><span style="word-break:break-all;">${escapeHtml(aud)}</span></div>
+                ${actLine}
+            </div>`;
+    }).join('');
+
+    return `
+        <div style="margin:4px 0 10px;">
+            <div style="font:600 12px/1.6 system-ui;opacity:.85;margin-bottom:10px;">🔗 Identity chain — control flows <code>agent0 → Agent B → todo0</code>; your <code>sub</code> is preserved at every hop</div>
+            <div style="position:relative;margin-left:10px;border-left:2px solid ${accent};padding-left:18px;">
+                ${nodeHtml}
+            </div>
+        </div>`;
+}
+
+/**
  * Render one <details> chip for a tool invocation. Collapsed by default.
  * All untrusted strings are escaped before injection (innerHTML).
  */
@@ -67,6 +128,7 @@ function renderToolChip(entry) {
             <div class="tool-chip-body">
                 <div class="tool-chip-section-label">arguments</div>
                 <pre class="tool-chip-json">${escapeHtml(argsJson)}</pre>
+                ${result && result.tokenChain ? renderTokenChain(result.tokenChain) : ''}
                 <div class="tool-chip-section-label">result</div>
                 <pre class="tool-chip-json">${escapeHtml(resultJson)}</pre>
             </div>
@@ -378,6 +440,11 @@ const CONNECTION_SECTIONS = [
         title: 'MCP Server',
         icon: 'local:assets/mcp-icon.svg',
     },
+    {
+        kind: 'a2a_server',
+        title: 'A2A Agent',
+        icon: 'lucide:bot',
+    },
 ];
 
 /**
@@ -542,6 +609,13 @@ function renderDetailRows(conn) {
                 renderValue('No', { copyable: false, hint: 'register in Okta Admin Console' }),
             ]);
         }
+    } else if (conn.kind === 'a2a_server') {
+        if (d.agentServerUrl) rows.push(['URL', renderValue(d.agentServerUrl)]);
+        if (d.resourceIndicator) rows.push(['Resource', renderValue(d.resourceIndicator)]);
+        if (d.authorizationServer) rows.push(['A2A AS', renderValue(d.authorizationServer)]);
+        if (d.oktaAgentServerId) {
+            rows.push(['Agent ID', renderValue(d.oktaAgentServerId)]);
+        }
     }
 
     return rows
@@ -681,6 +755,34 @@ function renderMcpServerCard(server) {
 }
 
 /**
+ * A2A Agent card. agent0 → Agent B over the A2A protocol, with the access
+ * token minted via ID-JAG against the A2A authorization server. "Live" once
+ * a delegated A2A call has succeeded this session.
+ */
+function renderA2aServerCard(conn) {
+    const status = statusFor(conn);
+    const resource = conn.details?.resourceIndicator;
+    let title = 'Task Agent (Agent B)';
+    if (resource) {
+        try {
+            title = `Agent B · ${new URL(resource).host}`;
+        } catch {
+            title = 'Task Agent (Agent B)';
+        }
+    }
+    return buildCard({
+        icon: 'lucide:bot',
+        title,
+        state: status.state,
+        statusLabel: status.label,
+        subtitle: conn.connected
+            ? 'A2A identity chaining → Agent B → todo0'
+            : 'ID-JAG → access token → A2A call',
+        detailsHtml: conn.configured ? renderDetailRows(conn) : '',
+    });
+}
+
+/**
  * Placeholder card when a section has no configured instances — still shown
  * so the "three managed-connection types" story reads even when a slot is
  * unconfigured or disabled.
@@ -715,6 +817,7 @@ function renderSectionBody(conn) {
         if (servers.length === 0) return renderEmptyCard('mcp_server', 'No MCP sessions');
         return servers.map(renderMcpServerCard).join('');
     }
+    if (conn.kind === 'a2a_server') return renderA2aServerCard(conn);
     return '';
 }
 
@@ -1077,6 +1180,68 @@ function addMessageToDOM(text, type = 'assistant', data = null, saveToHistory = 
     chatContainer.scrollTop = chatContainer.scrollHeight;
 }
 
+/** Friendly label for a tool name shown in the live activity log. */
+function labelForTool(tool) {
+    switch (tool) {
+        case 'delegate_to_task_agent': return 'Delegate to Task Agent (Agent B)';
+        case 'create-todo': return 'todo0 · create todo';
+        case 'get-todos': return 'todo0 · list todos';
+        case 'toggle-todo': return 'todo0 · toggle todo';
+        case 'delete-todo': return 'todo0 · delete todo';
+        case 'github_comment_on_pr': return 'GitHub · comment on PR';
+        case 'github_list_repos': return 'GitHub · list repos';
+        default: return tool;
+    }
+}
+
+/**
+ * A transient "what's happening" bubble that appends step lines as progress
+ * events stream in, then is removed when the final answer arrives.
+ */
+function createActivityLog() {
+    const wrap = document.createElement('div');
+    wrap.className = 'message assistant activity-log';
+    const inner = document.createElement('div');
+    inner.style.cssText = 'font:13px/1.8 system-ui;display:flex;flex-direction:column;gap:1px;';
+    wrap.appendChild(inner);
+    chatContainer.appendChild(wrap);
+    chatContainer.scrollTop = chatContainer.scrollHeight;
+
+    const toolLines = [];
+    let lastKind = null;
+    const add = (text) => {
+        const el = document.createElement('div');
+        el.textContent = text;
+        inner.appendChild(el);
+        chatContainer.scrollTop = chatContainer.scrollHeight;
+        return el;
+    };
+
+    return {
+        onProgress(evt) {
+            if (!evt || !evt.kind) return;
+            if (evt.kind === 'thinking') {
+                if (lastKind !== 'thinking') add('🧠 Thinking…');
+            } else if (evt.kind === 'note') {
+                add('   • ' + evt.text);
+            } else if (evt.kind === 'tool') {
+                if (evt.phase === 'start') {
+                    const label = labelForTool(evt.tool) + (evt.detail ? ' — ' + evt.detail : '');
+                    toolLines.push({ tool: evt.tool, done: false, el: add('⏳ ' + label + '…') });
+                } else {
+                    const entry = [...toolLines].reverse().find((l) => l.tool === evt.tool && !l.done);
+                    if (entry) {
+                        entry.done = true;
+                        entry.el.textContent = (evt.ok === false ? '⚠️ ' : '✅ ') + labelForTool(evt.tool);
+                    }
+                }
+            }
+            lastKind = evt.kind;
+        },
+        remove() { wrap.remove(); },
+    };
+}
+
 // Process message with LLM
 async function processMessage(message) {
     try {
@@ -1084,8 +1249,10 @@ async function processMessage(message) {
         showTypingIndicator();
         
         if (llmEnabled) {
-            // Use LLM endpoint
-            const response = await fetch(`${API_BASE_URL}/api/chat`, {
+            // Use the streaming LLM endpoint (SSE over fetch) so the UI can
+            // show live progress while the agent thinks / exchanges tokens /
+            // delegates to Agent B / runs MCP tools.
+            const response = await fetch(`${API_BASE_URL}/api/chat/stream`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -1105,12 +1272,49 @@ async function processMessage(message) {
                 return;
             }
 
-            if (!response.ok) {
+            if (!response.ok || !response.body) {
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
 
-            const result = await response.json();
-            
+            // Consume the SSE stream: render progress live, capture the final result.
+            const activity = createActivityLog();
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buf = '';
+            let result = null;
+            let streamError = null;
+
+            try {
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+                    buf += decoder.decode(value, { stream: true });
+                    let sep;
+                    while ((sep = buf.indexOf('\n\n')) !== -1) {
+                        const frame = buf.slice(0, sep);
+                        buf = buf.slice(sep + 2);
+                        const dataLine = frame.split('\n').find((l) => l.startsWith('data:'));
+                        if (!dataLine) continue;
+                        let msg;
+                        try { msg = JSON.parse(dataLine.slice(5).trim()); } catch { continue; }
+                        if (msg.type === 'progress') activity.onProgress(msg.payload);
+                        else if (msg.type === 'done') result = msg.result;
+                        else if (msg.type === 'error') streamError = msg.message;
+                    }
+                }
+            } finally {
+                activity.remove();
+            }
+
+            if (streamError) {
+                addMessage(`❌ ${streamError}`, 'error');
+                return;
+            }
+            if (!result) {
+                addMessage('❌ No response received from the agent.', 'error');
+                return;
+            }
+
             if (result.success) {
                 // Check if OAuth STS interaction is required (legacy single-resource path,
                 // used by the OIN GitHub integration).
@@ -1147,6 +1351,9 @@ async function processMessage(message) {
                         hasTools ? { toolResults: result.toolResults } : null
                     );
                 }
+                // A turn may have flipped a connection live (A2A delegation,
+                // ID-JAG, OAuth STS). Refresh the panel so cards reflect it.
+                loadConnectionStatus();
             } else {
                 addMessage(`❌ ${result.message || 'An error occurred'}`, 'error');
             }

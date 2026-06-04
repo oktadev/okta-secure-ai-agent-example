@@ -21,10 +21,12 @@ dotenv.config({ path: path.resolve(__dirname, '../.env.mcp') });
 // Create MCP Server
 // ============================================================================
 
-const server = new McpServer({
-  name: 'Todo Manager',
-  version: '1.0.0',
-});
+// NOTE: A fresh McpServer is created PER SESSION (see createTodoMcpServer below),
+// not shared globally. The MCP SDK binds a server to a single transport, so a
+// shared server instance breaks when multiple clients connect concurrently —
+// e.g. agent0 and Agent B both using todo0 during A2A identity chaining. The
+// later connect() rebinds the server and the earlier session's requests hang
+// (MCP error -32001 "Request timed out"). Per-session servers avoid that.
 
 const createTodoParams: z.ZodRawShape = {
   title: z.string().describe('The title/content of the todo item'),
@@ -47,7 +49,7 @@ const deleteTodoParams: z.ZodRawShape = {
 /**
  * Register MCP tools with scope-based authorization
  */
-function registerTools(verifyAccessTokenWithScopes: (authHeader: string, scopes: string[]) => Promise<{ valid: boolean; userId?: string; missingScopes?: string[] }>): void {
+function registerTools(server: McpServer, verifyAccessTokenWithScopes: (authHeader: string, scopes: string[]) => Promise<{ valid: boolean; userId?: string; missingScopes?: string[] }>): void {
   /**
    * Create a protected tool that verifies scopes and passes userId to the callback
    * @param scopes - Required scopes for this tool
@@ -263,6 +265,19 @@ function registerTools(verifyAccessTokenWithScopes: (authHeader: string, scopes:
   );
 }
 
+/**
+ * Build a fresh MCP server instance for a single session, with tools registered.
+ * One server per transport keeps concurrent sessions (e.g. agent0 + Agent B
+ * during A2A identity chaining) fully isolated.
+ */
+function createTodoMcpServer(
+  verifyAccessTokenWithScopes: (authHeader: string, scopes: string[]) => Promise<{ valid: boolean; userId?: string; missingScopes?: string[] }>
+): McpServer {
+  const server = new McpServer({ name: 'Todo Manager', version: '1.0.0' });
+  registerTools(server, verifyAccessTokenWithScopes);
+  return server;
+}
+
 // ============================================================================
 // Express Server Setup with StreamableHTTP
 // ============================================================================
@@ -337,8 +352,8 @@ async function bootstrap(): Promise<void> {
     mcpExpectedAudience: config.mcpExpectedAudience,
   });
 
-  // Register tools with validated auth
-  registerTools(verifyAccessTokenWithScopes);
+  // Tools are registered per-session in createTodoMcpServer() (one MCP server
+  // per transport) so concurrent clients don't rebind a shared server.
 
   const app = express();
 
@@ -442,8 +457,11 @@ async function bootstrap(): Promise<void> {
           }
         };
 
-        // Connect the transport to the MCP server
-        await server.connect(transport);
+        // Connect a FRESH per-session MCP server to this transport (see
+        // createTodoMcpServer). A shared server would rebind on each connect
+        // and break concurrent sessions.
+        const sessionServer = createTodoMcpServer(verifyAccessTokenWithScopes);
+        await sessionServer.connect(transport);
       } else {
         // Invalid request - no session ID or not an initialization request
         return res.status(400).json({

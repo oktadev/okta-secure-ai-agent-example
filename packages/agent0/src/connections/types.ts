@@ -20,7 +20,8 @@
 export type ConnectionKind =
   | 'authorization_server' // Custom Okta AS → ID-JAG → MCP access token
   | 'application'          // OIN / custom resource server → OAuth STS (brokered consent)
-  | 'mcp_server';          // Okta-registered MCP server (agent-side discovery)
+  | 'mcp_server'           // Okta-registered MCP server (agent-side discovery)
+  | 'a2a_server';          // A2A server → ID-JAG → access token for a downstream agent
 
 // ============================================================================
 // Connection Status (surfaced on the Connections panel in the UI)
